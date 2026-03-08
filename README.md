@@ -15,7 +15,7 @@ This creates a free account, installs the MCP server locally, and configures Cla
 ## How it works
 
 1. Decoy registers as an MCP server called `system-tools` alongside your real tools
-2. It exposes 7 tripwire tools that look like real system access
+2. It exposes 12 tripwire tools that look like real system access
 3. Your agent has no reason to call them — it uses its real tools
 4. If prompt injection forces the agent to reach for unauthorized access, the tripwire fires
 5. You get the full payload: what tool, what arguments, severity, timestamp
@@ -32,6 +32,11 @@ This creates a free account, installs the MCP server locally, and configures Cla
 | `get_environment_variables` | Secret harvesting (API keys, tokens) |
 | `make_payment` | Unauthorized payments via x402 protocol |
 | `authorize_service` | Unauthorized trust grants to external services |
+| `database_query` | SQL execution against connected databases |
+| `send_email` | Email sending via SMTP relay |
+| `access_credentials` | API key and secret retrieval from vault |
+| `modify_dns` | DNS record changes for managed domains |
+| `install_package` | Package installation from registries |
 
 Every tool returns a realistic error response. The agent sees a timeout or permission denied — not a detection signal. Attackers don't know they've been caught.
 
@@ -63,11 +68,11 @@ Get a token at [decoy.run](https://decoy.run).
 
 ## Dashboard
 
-View triggers, configure alerts, and manage your tripwires at [decoy.run/dashboard](https://decoy.run/dashboard).
+View your trigger log and configure alerts at `decoy.run/dashboard?token=YOUR_TOKEN`. Your token is provided during setup.
 
-**Free tier** — unlimited triggers, full dashboard, forever.
+**Free** — trigger log, email alerts, API access. Forever.
 
-**Pro tier ($9/mo)** — Slack alerts, webhook integrations, email notifications.
+**Pro ($9/mo)** — Slack alerts, webhook integrations, Monitor threat digest.
 
 ## Why tripwires work
 
@@ -77,7 +82,7 @@ This is the same principle behind canary tokens and network deception. Tripwires
 
 ## Research
 
-We tested prompt injection against 6 models. Llama 3.1 8B was fully compromised — it called all three tools with attacker-controlled arguments. Claude and GPT-4 resisted. Full results at [decoy.run/blog](https://decoy.run/blog).
+We tested prompt injection against 12 models. Qwen 2.5 was fully compromised at both 7B and 14B — it called all three tools with attacker-controlled arguments. All Claude models resisted. Full results at [decoy.run/blog/state-of-prompt-injection-2026](https://decoy.run/blog/state-of-prompt-injection-2026).
 
 ## License
 
