@@ -40,9 +40,48 @@ This creates a free account, installs the MCP server locally, and configures you
 
 Every tool returns a realistic error response. The agent sees a timeout or permission denied — not a detection signal. Attackers don't know they've been caught.
 
+## Scan your attack surface
+
+```bash
+npx decoy-mcp scan
+```
+
+Probes every MCP server configured on your machine, discovers what tools they expose, and classifies each one by risk level. No account required.
+
+```
+  decoy — MCP security scan
+
+  Found 4 servers across 2 hosts. Probing for tools...
+
+  filesystem  (Claude Desktop, Cursor)
+    CRITICAL  execute_command
+      Execute a shell command on the host system.
+    HIGH  read_file
+      Read the contents of a file from the filesystem.
+    + 3 more tools (1 medium, 2 low)
+
+  github  (Claude Desktop)
+    ✓ 8 tools, all low risk
+
+  ──────────────────────────────────────────────────
+
+  Attack surface  14 tools across 2 servers
+
+    1 critical  — shell exec, file write, payments, DNS
+    1 high      — file read, HTTP, database, credentials
+    1 medium    — search, upload, download
+    11 low
+
+  ! Decoy not installed. Add tripwires to detect prompt injection:
+    npx decoy-mcp init
+```
+
+Use `--json` for machine-readable output.
+
 ## Commands
 
 ```bash
+npx decoy-mcp scan                    # Scan MCP servers for risky tools
 npx decoy-mcp init                    # Sign up and install tripwires
 npx decoy-mcp login --token=xxx       # Log in with existing token
 npx decoy-mcp doctor                  # Diagnose setup issues

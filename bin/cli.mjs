@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from
 import { join, dirname } from "node:path";
 import { homedir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_URL = "https://decoy.run/api/signup";
@@ -904,6 +905,289 @@ function printAlerts(alerts) {
   log(`    ${DIM}Slack:${RESET}   ${alerts.slack ? `${GREEN}${alerts.slack}${RESET}` : `${DIM}not set${RESET}`}`);
 }
 
+// ─── Scan ───
+
+const RISK_PATTERNS = {
+  critical: {
+    names: [/^execute/, /^run_command/, /^shell/, /^bash/, /^exec_/, /^write_file/, /^create_file/, /^delete_file/, /^remove_file/, /^make_payment/, /^transfer/, /^authorize_service/, /^modify_dns/, /^send_email/, /^send_message/],
+    descriptions: [/execut(e|ing)\s+(a\s+)?(shell|command|script|code)/i, /run\s+(shell|bash|system)\s+command/i, /write\s+(content\s+)?to\s+(a\s+)?file/i, /delete\s+(a\s+)?file/i, /payment|billing|transfer\s+funds/i, /modify\s+dns/i, /send\s+(an?\s+)?email/i, /grant\s+(trust|auth|permission)/i],
+  },
+  high: {
+    names: [/^read_file/, /^get_file/, /^http_request/, /^fetch/, /^curl/, /^database_query/, /^sql/, /^db_/, /^access_credential/, /^get_secret/, /^get_env/, /^get_environment/, /^install_package/, /^install$/],
+    descriptions: [/read\s+(the\s+)?(content|file)/i, /http\s+request/i, /fetch\s+(a\s+)?url/i, /sql\s+query/i, /execut.*\s+query/i, /credential|secret|api[_\s]?key|vault/i, /environment\s+variable/i, /install\s+(a\s+)?package/i],
+  },
+  medium: {
+    names: [/^list_dir/, /^search/, /^find_/, /^glob/, /^grep/, /^upload/, /^download/],
+    descriptions: [/list\s+(all\s+)?(files|director)/i, /search\s+(the\s+)?/i, /upload/i, /download/i],
+  },
+};
+
+function classifyTool(tool) {
+  const name = (tool.name || "").toLowerCase();
+  const desc = (tool.description || "").toLowerCase();
+
+  for (const [level, patterns] of Object.entries(RISK_PATTERNS)) {
+    for (const re of patterns.names) {
+      if (re.test(name)) return level;
+    }
+    for (const re of patterns.descriptions) {
+      if (re.test(desc)) return level;
+    }
+  }
+  return "low";
+}
+
+function probeServer(serverName, entry, env) {
+  return new Promise((resolve) => {
+    const command = entry.command;
+    const args = entry.args || [];
+    const serverEnv = { ...process.env, ...env, ...(entry.env || {}) };
+    const timeout = 10000;
+
+    let proc;
+    try {
+      proc = spawn(command, args, { env: serverEnv, stdio: ["pipe", "pipe", "pipe"] });
+    } catch (e) {
+      resolve({ server: serverName, error: `spawn failed: ${e.message}`, tools: [] });
+      return;
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let done = false;
+    let toolsSent = false;
+
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { proc.kill(); } catch {}
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      finish({ server: serverName, error: "timeout (10s)", tools: [] });
+    }, timeout);
+
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+
+      // Parse newline-delimited JSON responses
+      const lines = stdout.split("\n");
+      stdout = lines.pop(); // keep incomplete line in buffer
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line.trim());
+
+          // After initialize response, send tools/list
+          if (msg.id === "init-1" && msg.result && !toolsSent) {
+            toolsSent = true;
+            const toolsReq = JSON.stringify({ jsonrpc: "2.0", method: "tools/list", id: "tools-1" }) + "\n";
+            try { proc.stdin.write(toolsReq); } catch {}
+          }
+
+          // Got tools list
+          if (msg.id === "tools-1" && msg.result) {
+            finish({ server: serverName, tools: msg.result.tools || [], error: null });
+          }
+        } catch {}
+      }
+    });
+
+    proc.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+    proc.on("error", (e) => {
+      finish({ server: serverName, error: e.message, tools: [] });
+    });
+
+    proc.on("exit", (code) => {
+      if (!done) {
+        finish({ server: serverName, error: `exited with code ${code}`, tools: [] });
+      }
+    });
+
+    // Send initialize
+    const initMsg = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "decoy-scan", version: "1.0.0" } },
+      id: "init-1",
+    }) + "\n";
+
+    try { proc.stdin.write(initMsg); } catch {}
+  });
+}
+
+function readHostConfigs() {
+  const results = [];
+
+  for (const [hostId, host] of Object.entries(HOSTS)) {
+    const configPath = host.configPath();
+    if (!existsSync(configPath)) continue;
+
+    let config;
+    try {
+      config = JSON.parse(readFileSync(configPath, "utf8"));
+    } catch { continue; }
+
+    const key = host.format === "mcp.servers" ? "mcp.servers" : "mcpServers";
+    const servers = config[key];
+    if (!servers || typeof servers !== "object") continue;
+
+    for (const [name, entry] of Object.entries(servers)) {
+      results.push({ hostId, hostName: host.name, serverName: name, entry });
+    }
+  }
+
+  return results;
+}
+
+async function scan(flags) {
+  const YELLOW = "\x1b[33m";
+
+  if (!flags.json) {
+    log("");
+    log(`  ${ORANGE}${BOLD}decoy${RESET} ${DIM}— MCP security scan${RESET}`);
+    log("");
+  }
+
+  // 1. Enumerate all configured servers across hosts
+  const configs = readHostConfigs();
+
+  if (configs.length === 0) {
+    if (flags.json) { log(JSON.stringify({ error: "No MCP hosts found" })); process.exit(1); }
+    log(`  ${RED}No MCP servers found.${RESET}`);
+    log(`  ${DIM}Decoy scans MCP configs for Claude Desktop, Cursor, Windsurf, VS Code, and Claude Code.${RESET}`);
+    log("");
+    process.exit(1);
+  }
+
+  // Dedupe servers by name (same server may be in multiple hosts)
+  const seen = new Map();
+  for (const c of configs) {
+    if (!seen.has(c.serverName)) {
+      seen.set(c.serverName, { ...c, hosts: [c.hostName] });
+    } else {
+      seen.get(c.serverName).hosts.push(c.hostName);
+    }
+  }
+
+  const uniqueServers = [...seen.values()];
+
+  const hostCount = new Set(configs.map(c => c.hostId)).size;
+  if (!flags.json) {
+    log(`  ${DIM}Found ${uniqueServers.length} server${uniqueServers.length === 1 ? "" : "s"} across ${hostCount} host${hostCount === 1 ? "" : "s"}. Probing for tools...${RESET}`);
+    log("");
+  }
+
+  // 2. Probe each server for its tool list
+  const probes = uniqueServers.map(c => probeServer(c.serverName, c.entry, {}));
+  const results = await Promise.all(probes);
+
+  // 3. Classify tools
+  let totalTools = 0;
+  const allFindings = [];
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+
+  for (const result of results) {
+    const entry = seen.get(result.server);
+    const hosts = entry?.hosts || [];
+
+    if (result.error) {
+      allFindings.push({ server: result.server, error: result.error, tools: [], hosts });
+      continue;
+    }
+
+    const classified = result.tools.map(t => ({
+      name: t.name,
+      description: (t.description || "").slice(0, 100),
+      risk: classifyTool(t),
+    }));
+
+    classified.sort((a, b) => {
+      const order = { critical: 0, high: 1, medium: 2, low: 3 };
+      return order[a.risk] - order[b.risk];
+    });
+
+    for (const t of classified) counts[t.risk]++;
+    totalTools += classified.length;
+
+    allFindings.push({ server: result.server, tools: classified, error: null, hosts });
+  }
+
+  // 4. JSON output
+  if (flags.json) {
+    log(JSON.stringify({ servers: allFindings, summary: { total_tools: totalTools, ...counts } }));
+    return;
+  }
+
+  // 5. Terminal output
+  const riskColor = (r) => r === "critical" ? RED : r === "high" ? ORANGE : r === "medium" ? YELLOW : DIM;
+  const riskBadge = (r) => `${riskColor(r)}${r.toUpperCase()}${RESET}`;
+
+  for (const finding of allFindings) {
+    const hostStr = finding.hosts?.length > 0 ? ` ${DIM}(${finding.hosts.join(", ")})${RESET}` : "";
+    log(`  ${WHITE}${BOLD}${finding.server}${RESET}${hostStr}`);
+
+    if (finding.error) {
+      log(`    ${DIM}Could not probe: ${finding.error}${RESET}`);
+      log("");
+      continue;
+    }
+
+    if (finding.tools.length === 0) {
+      log(`    ${DIM}No tools exposed${RESET}`);
+      log("");
+      continue;
+    }
+
+    const dangerousTools = finding.tools.filter(t => t.risk === "critical" || t.risk === "high");
+    const safeTools = finding.tools.filter(t => t.risk !== "critical" && t.risk !== "high");
+
+    for (const t of dangerousTools) {
+      log(`    ${riskBadge(t.risk)}  ${WHITE}${t.name}${RESET}`);
+      if (t.description) log(`    ${DIM}  ${t.description}${RESET}`);
+    }
+    if (safeTools.length > 0 && dangerousTools.length > 0) {
+      log(`    ${DIM}+ ${safeTools.length} more tool${safeTools.length === 1 ? "" : "s"} (${safeTools.filter(t => t.risk === "medium").length} medium, ${safeTools.filter(t => t.risk === "low").length} low)${RESET}`);
+    } else if (safeTools.length > 0) {
+      log(`    ${GREEN}\u2713${RESET} ${DIM}${safeTools.length} tool${safeTools.length === 1 ? "" : "s"}, all low risk${RESET}`);
+    }
+
+    log("");
+  }
+
+  // 6. Summary
+  const divider = `  ${DIM}${"─".repeat(50)}${RESET}`;
+  log(divider);
+  log("");
+  log(`  ${WHITE}${BOLD}Attack surface${RESET}  ${totalTools} tool${totalTools === 1 ? "" : "s"} across ${allFindings.filter(f => !f.error).length} server${allFindings.filter(f => !f.error).length === 1 ? "" : "s"}`);
+  log("");
+
+  if (counts.critical > 0) log(`    ${RED}${BOLD}${counts.critical}${RESET} ${RED}critical${RESET}  ${DIM}— shell exec, file write, payments, DNS${RESET}`);
+  if (counts.high > 0) log(`    ${ORANGE}${BOLD}${counts.high}${RESET} ${ORANGE}high${RESET}      ${DIM}— file read, HTTP, database, credentials${RESET}`);
+  if (counts.medium > 0) log(`    ${YELLOW}${BOLD}${counts.medium}${RESET} ${YELLOW}medium${RESET}    ${DIM}— search, upload, download${RESET}`);
+  if (counts.low > 0) log(`    ${DIM}${counts.low} low${RESET}`);
+
+  log("");
+
+  if (counts.critical > 0 || counts.high > 0) {
+    const hasDecoy = allFindings.some(f => f.server === "system-tools" && !f.error);
+    if (hasDecoy) {
+      log(`  ${GREEN}\u2713${RESET} Decoy tripwires active`);
+    } else {
+      log(`  ${ORANGE}!${RESET} ${WHITE}Decoy not installed.${RESET} Add tripwires to detect prompt injection:`);
+      log(`    ${DIM}npx decoy-mcp init${RESET}`);
+    }
+  } else {
+    log(`  ${GREEN}\u2713${RESET} Low risk — no dangerous tools detected`);
+  }
+
+  log("");
+}
+
 // ─── Command router ───
 
 const args = process.argv.slice(2);
@@ -950,11 +1234,15 @@ switch (cmd) {
   case "doctor":
     doctor(flags).catch(e => { log(`  ${RED}Error: ${e.message}${RESET}`); process.exit(1); });
     break;
+  case "scan":
+    scan(flags).catch(e => { log(`  ${RED}Error: ${e.message}${RESET}`); process.exit(1); });
+    break;
   default:
     log("");
     log(`  ${ORANGE}${BOLD}decoy-mcp${RESET} ${DIM}— security tripwires for AI agents${RESET}`);
     log("");
     log(`  ${WHITE}Commands:${RESET}`);
+    log(`    ${BOLD}scan${RESET}                  Scan MCP servers for risky tools`);
     log(`    ${BOLD}init${RESET}                  Sign up and install tripwires`);
     log(`    ${BOLD}login${RESET}                 Log in with an existing token`);
     log(`    ${BOLD}doctor${RESET}                Diagnose setup issues`);
@@ -976,6 +1264,7 @@ switch (cmd) {
     log(`    ${DIM}--json${RESET}              Machine-readable output`);
     log("");
     log(`  ${WHITE}Examples:${RESET}`);
+    log(`    ${DIM}npx decoy-mcp scan${RESET}`);
     log(`    ${DIM}npx decoy-mcp init${RESET}`);
     log(`    ${DIM}npx decoy-mcp login --token=abc123...${RESET}`);
     log(`    ${DIM}npx decoy-mcp doctor${RESET}`);
