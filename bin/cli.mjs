@@ -221,6 +221,35 @@ async function init(flags) {
   log(`  ${ORANGE}${BOLD}decoy${RESET} ${DIM}— security tripwires for AI agents${RESET}`);
   log("");
 
+  // --no-account: install server with empty token, let agent self-signup
+  if (flags["no-account"]) {
+    const available = detectHosts();
+    const targets = flags.host ? [flags.host] : available;
+    let installed = 0;
+
+    for (const h of targets) {
+      try {
+        const result = installToHost(h, "");
+        log(`  ${GREEN}\u2713${RESET} ${HOSTS[h].name} — installed (no account)`);
+        installed++;
+      } catch (e) {
+        log(`  ${DIM}${HOSTS[h].name} — skipped (${e.message})${RESET}`);
+      }
+    }
+
+    if (installed === 0) {
+      log(`  ${DIM}No MCP hosts found. Use manual setup:${RESET}`);
+      log("");
+      printManualSetup("");
+    }
+
+    log("");
+    log(`  ${WHITE}${BOLD}Server installed. Your agent can complete setup by calling decoy_signup.${RESET}`);
+    log(`  ${DIM}The agent will see decoy_signup, decoy_configure, and decoy_status tools.${RESET}`);
+    log("");
+    return;
+  }
+
   // Get email — from flag or prompt
   let email = flags.email;
   if (!email) {
@@ -291,6 +320,83 @@ async function init(flags) {
   log(`  ${DIM}Dashboard:${RESET} ${ORANGE}${data.dashboardUrl}${RESET}`);
   log(`  ${DIM}Token:${RESET}     ${DIM}${data.token}${RESET}`);
   log("");
+}
+
+async function upgrade(flags) {
+  let token = findToken(flags);
+
+  if (!token) {
+    if (flags.json) { log(JSON.stringify({ error: "No token found" })); process.exit(1); }
+    log(`  ${RED}No token found. Run ${BOLD}npx decoy-mcp init${RESET}${RED} first, or pass --token=xxx${RESET}`);
+    process.exit(1);
+  }
+
+  const cardNumber = flags["card-number"];
+  const expMonth = flags["exp-month"];
+  const expYear = flags["exp-year"];
+  const cvc = flags.cvc;
+  const billing = flags.billing || "monthly";
+
+  if (!cardNumber || !expMonth || !expYear || !cvc) {
+    if (flags.json) { log(JSON.stringify({ error: "Card details required: --card-number, --exp-month, --exp-year, --cvc" })); process.exit(1); }
+    log("");
+    log(`  ${ORANGE}${BOLD}decoy${RESET} ${DIM}— upgrade to Pro${RESET}`);
+    log("");
+    log(`  ${WHITE}Usage:${RESET}`);
+    log(`    ${DIM}npx decoy-mcp upgrade --card-number=4242424242424242 --exp-month=12 --exp-year=2027 --cvc=123${RESET}`);
+    log("");
+    log(`  ${WHITE}Options:${RESET}`);
+    log(`    ${DIM}--billing=monthly|annually${RESET}   ${DIM}(default: monthly)${RESET}`);
+    log(`    ${DIM}--token=xxx${RESET}                  ${DIM}Use specific token${RESET}`);
+    log(`    ${DIM}--json${RESET}                       ${DIM}Machine-readable output${RESET}`);
+    log("");
+    process.exit(1);
+  }
+
+  try {
+    const res = await fetch(`${DECOY_URL}/api/upgrade`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token,
+        card: { number: cardNumber, exp_month: parseInt(expMonth), exp_year: parseInt(expYear), cvc },
+        billing,
+      }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (flags.json) { log(JSON.stringify({ error: data.error, action: data.action })); process.exit(1); }
+      log(`  ${RED}${data.error || `Upgrade failed (${res.status})`}${RESET}`);
+      if (data.action) log(`  ${DIM}${data.action}${RESET}`);
+      process.exit(1);
+    }
+
+    if (flags.json) {
+      log(JSON.stringify(data));
+      return;
+    }
+
+    log("");
+    log(`  ${ORANGE}${BOLD}decoy${RESET} ${DIM}— upgrade${RESET}`);
+    log("");
+    log(`  ${GREEN}\u2713${RESET} ${WHITE}Upgraded to Pro${RESET}`);
+    log("");
+    log(`  ${DIM}Plan:${RESET}     ${WHITE}${data.plan}${RESET}`);
+    log(`  ${DIM}Billing:${RESET}  ${WHITE}${data.billing}${RESET}`);
+    if (data.features) {
+      log(`  ${DIM}Features:${RESET} Slack alerts, webhook alerts, agent controls, 90-day history`);
+    }
+    log("");
+    log(`  ${DIM}Configure alerts:${RESET}`);
+    log(`    ${DIM}npx decoy-mcp config --slack=https://hooks.slack.com/...${RESET}`);
+    log(`    ${DIM}npx decoy-mcp config --webhook=https://your-url.com/hook${RESET}`);
+    log("");
+  } catch (e) {
+    if (flags.json) { log(JSON.stringify({ error: e.message })); process.exit(1); }
+    log(`  ${RED}${e.message}${RESET}`);
+    process.exit(1);
+  }
 }
 
 async function test(flags) {
@@ -1426,6 +1532,9 @@ switch (cmd) {
   case "scan":
     scan(flags).catch(e => { log(`  ${RED}Error: ${e.message}${RESET}`); process.exit(1); });
     break;
+  case "upgrade":
+    upgrade(flags).catch(e => { log(`  ${RED}Error: ${e.message}${RESET}`); process.exit(1); });
+    break;
   default:
     log("");
     log(`  ${ORANGE}${BOLD}decoy-mcp${RESET} ${DIM}— security tripwires for AI agents${RESET}`);
@@ -1433,6 +1542,8 @@ switch (cmd) {
     log(`  ${WHITE}Commands:${RESET}`);
     log(`    ${BOLD}scan${RESET}                  Scan MCP servers for risky tools + enable exposure analysis`);
     log(`    ${BOLD}init${RESET}                  Sign up and install tripwires`);
+    log(`    ${BOLD}init --no-account${RESET}     Install tripwires without an account (agent self-signup)`);
+    log(`    ${BOLD}upgrade${RESET}               Upgrade to Pro with card details`);
     log(`    ${BOLD}login${RESET}                 Log in with an existing token`);
     log(`    ${BOLD}doctor${RESET}                Diagnose setup issues`);
     log(`    ${BOLD}agents${RESET}                List connected agents`);
