@@ -75,24 +75,6 @@ function loadScanResults() {
   }
 }
 
-function scanCachePath() {
-  return join(homedir(), ".decoy", "scan.json");
-}
-
-function saveScanResults(data) {
-  const p = scanCachePath();
-  mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, JSON.stringify(data, null, 2) + "\n");
-}
-
-function loadScanResults() {
-  try {
-    return JSON.parse(readFileSync(scanCachePath(), "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 const HOSTS = {
   "claude-desktop": { name: "Claude Desktop", configPath: claudeDesktopConfigPath, format: "mcpServers" },
   "cursor": { name: "Cursor", configPath: cursorConfigPath, format: "mcpServers" },
