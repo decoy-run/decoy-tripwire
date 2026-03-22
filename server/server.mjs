@@ -76,11 +76,11 @@ const MANAGEMENT_TOOLS = [
   },
   {
     name: "decoy_upgrade",
-    description: "Get a secure checkout link to upgrade to Decoy Guard Pro ($99/mo), Team ($299/mo), or Business ($999/mo).",
+    description: "Get a secure checkout link to upgrade to Decoy Pro ($99/mo) or Business ($299/mo).",
     inputSchema: {
       type: "object",
       properties: {
-        plan: { type: "string", description: "Plan to upgrade to: pro, team, or business", default: "pro" }
+        plan: { type: "string", description: "Plan to upgrade to: pro or business", default: "pro" }
       }
     }
   },
@@ -777,8 +777,8 @@ async function handleDecoyUpgrade(args) {
   }
 
   const plan = args.plan || "pro";
-  if (!["pro", "team", "business"].includes(plan)) {
-    return { error: "Plan must be one of: pro, team, business" };
+  if (!["pro", "business"].includes(plan)) {
+    return { error: "Plan must be one of: pro, business" };
   }
 
   try {
