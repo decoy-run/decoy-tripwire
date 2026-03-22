@@ -76,7 +76,7 @@ const MANAGEMENT_TOOLS = [
   },
   {
     name: "decoy_upgrade",
-    description: "Get a secure checkout link to upgrade to Decoy Pro ($99/mo) or Business ($299/mo).",
+    description: "Get a secure checkout link to upgrade to Decoy Guard Pro ($99/mo) or Business ($299/mo).",
     inputSchema: {
       type: "object",
       properties: {

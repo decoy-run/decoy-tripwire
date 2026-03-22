@@ -1,6 +1,6 @@
 # Decoy MCP
 
-Tripwire detection for AI agents. Part of [Decoy](https://decoy.run) — security scanning for MCP servers.
+Tripwire detection for AI agents. Part of [Decoy](https://decoy.run) — scan, detect, and monitor your MCP servers.
 
 [![npm](https://img.shields.io/npm/v/decoy-mcp)](https://www.npmjs.com/package/decoy-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
