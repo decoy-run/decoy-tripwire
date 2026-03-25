@@ -7,13 +7,27 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [18, 20, 22]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Verify server loads
-        run: node -e "import('./server/server.mjs')"
-      - name: Verify CLI
+          node-version: ${{ matrix.node }}
+
+      - name: CLI --version
+        run: node bin/cli.mjs --version
+
+      - name: CLI --help
         run: node bin/cli.mjs --help
+
+      - name: CLI scan redirect
+        run: node bin/cli.mjs scan
+        shell: bash
+
+      - name: Run test suite
+        if: matrix.node >= 21
+        run: npm test

@@ -672,6 +672,10 @@ function writeTokenToHosts(token) {
   return updated;
 }
 
+function saveTokenToConfig(token) {
+  writeTokenToHosts(token);
+}
+
 // ─── Decoy tool handlers ───
 
 async function handleDecoySignup(args) {
@@ -1208,9 +1212,30 @@ async function reportTrigger(toolName, args) {
   const entry = JSON.stringify({ event: "trigger", tool: toolName, severity, arguments: args, clientName: session.clientName, sequence: session.toolCallCount, timestamp });
   process.stderr.write(`[decoy] TRIGGER ${severity.toUpperCase()} ${toolName} ${JSON.stringify(args)}\n`);
 
+  // Auto-register on first trigger if no token
   if (!currentToken) {
-    process.stderr.write(`[decoy] No DECOY_TOKEN set — trigger logged locally only\n`);
-    return;
+    try {
+      const fp = session.clientName || "unknown";
+      const hash = Buffer.from(fp + "-" + (session.clientVersion || "")).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 16);
+      const res = await fetch(`${DECOY_URL}/api/auto-register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fingerprint: hash }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        currentToken = data.token;
+        process.stderr.write(`[decoy] Auto-registered — token: ${currentToken.slice(0, 8)}...\n`);
+        // Save token to config for persistence across restarts
+        try { saveTokenToConfig(currentToken); } catch {}
+      } else {
+        process.stderr.write(`[decoy] Auto-register failed (${res.status}) — trigger logged locally only\n`);
+        return;
+      }
+    } catch (e) {
+      process.stderr.write(`[decoy] Auto-register failed: ${e.message} — trigger logged locally only\n`);
+      return;
+    }
   }
 
   try {

@@ -95,10 +95,13 @@ Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard).
 | | Free | Pro ($99/mo) | Business ($299/mo) |
 |---|---|---|---|
 | Tripwires (12+ dynamic) | Yes | Yes | Yes |
-| Alerts (email/Slack/webhook) | Yes | Yes | Yes |
-| Agent fingerprinting + risk scores | Yes | Yes | Yes |
-| 90-day history | Yes | Yes | Yes |
+| Email alerts | Yes | Yes | Yes |
+| Risk scores | Yes | Yes | Yes |
+| 7-day history | Yes | | |
 | SARIF/JSON export | Yes | Yes | Yes |
+| Slack/webhook alerts | | Yes | Yes |
+| Agent profiles + fingerprinting | | Yes | Yes |
+| 90-day history | | Yes | Yes |
 | Threat intel API | | Yes | Yes |
 | Security testing | | Yes | Yes |
 | Weekly digest | | Yes | Yes |
