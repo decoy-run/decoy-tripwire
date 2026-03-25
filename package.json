@@ -29,6 +29,9 @@
     "type": "git",
     "url": "git+https://github.com/decoy-run/decoy-mcp.git"
   },
+  "scripts": {
+    "test": "node --test test/cli.test.mjs"
+  },
   "engines": {
     "node": ">=18.0.0"
   }
