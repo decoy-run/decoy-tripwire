@@ -7,7 +7,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, platform } from "node:os";
+import { pathToFileURL } from "node:url";
 
 const exec = promisify(execFile);
 const CLI = join(import.meta.dirname, "..", "bin", "cli.mjs");
@@ -56,7 +57,8 @@ describe("basics", () => {
   });
 
   it("module loads without error", async () => {
-    const { exitCode } = await exec("node", ["-e", `import('${CLI}')`]);
+    const cliUrl = pathToFileURL(CLI).href;
+    const { exitCode } = await exec("node", ["-e", `import('${cliUrl}')`]);
     // Just checking it doesn't throw on import
     assert.ok(true);
   });
@@ -122,16 +124,24 @@ describe("uninstall confirmation", () => {
   it("uninstall without --confirm in non-TTY exits 1", async () => {
     // Create a temporary HOME with a mock Claude Desktop config containing system-tools
     const fakeHome = join(tmpdir(), `decoy-test-uninstall-${Date.now()}`);
+    const isWin = platform() === "win32";
     const configDir = process.platform === "darwin"
       ? join(fakeHome, "Library", "Application Support", "Claude")
-      : join(fakeHome, ".config", "Claude");
+      : isWin
+        ? join(fakeHome, "AppData", "Roaming", "Claude")
+        : join(fakeHome, ".config", "Claude");
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, "claude_desktop_config.json"), JSON.stringify({
       mcpServers: { "system-tools": { command: "npx", args: ["decoy-mcp"] } }
     }));
 
+    // On Windows, homedir() uses USERPROFILE; on Unix it uses HOME
+    const homeEnv = isWin
+      ? { USERPROFILE: fakeHome, APPDATA: join(fakeHome, "AppData", "Roaming") }
+      : { HOME: fakeHome };
+
     try {
-      const { exitCode, stderr } = await run(["uninstall"], { env: { HOME: fakeHome, DECOY_TOKEN: "" } });
+      const { exitCode, stderr } = await run(["uninstall"], { env: { ...homeEnv, DECOY_TOKEN: "" } });
       assert.equal(exitCode, 1);
       assert.match(stderr, /--confirm/);
     } finally {
