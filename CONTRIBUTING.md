@@ -42,12 +42,24 @@ For bigger or architectural changes:
 
 ## Testing
 
-There's no test framework yet. Verify changes work by piping MCP messages to the server:
+Run the full test suite before pushing:
 
 ```bash
-# Check syntax
-node -c server/server.mjs && node -c bin/cli.mjs
+npm test
+```
 
+This runs both CLI tests and MCP server protocol tests (49 tests total). All tests must pass before opening a PR.
+
+You can also run individual test files:
+
+```bash
+node --test test/cli.test.mjs      # CLI commands, flags, output
+node --test test/server.test.mjs   # MCP protocol: initialize, tools/list, tools/call, telemetry
+```
+
+For manual testing:
+
+```bash
 # Test unconfigured mode
 printf '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":"1"}\n{"jsonrpc":"2.0","method":"tools/list","id":"2"}\n' | DECOY_TOKEN="" node server/server.mjs 2>/dev/null
 
