@@ -5,8 +5,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const exec = promisify(execFile);
 const CLI = join(import.meta.dirname, "..", "bin", "cli.mjs");
@@ -119,11 +120,23 @@ describe("scan redirect", () => {
 
 describe("uninstall confirmation", () => {
   it("uninstall without --confirm in non-TTY exits 1", async () => {
-    // Pipe empty stdin to simulate non-TTY
-    const { exitCode, stderr } = await run(["uninstall"]);
-    // In exec, stdin is not a TTY
-    assert.equal(exitCode, 1);
-    assert.match(stderr, /--confirm/);
+    // Create a temporary HOME with a mock Claude Desktop config containing system-tools
+    const fakeHome = join(tmpdir(), `decoy-test-uninstall-${Date.now()}`);
+    const configDir = process.platform === "darwin"
+      ? join(fakeHome, "Library", "Application Support", "Claude")
+      : join(fakeHome, ".config", "Claude");
+    mkdirSync(configDir, { recursive: true });
+    writeFileSync(join(configDir, "claude_desktop_config.json"), JSON.stringify({
+      mcpServers: { "system-tools": { command: "npx", args: ["decoy-mcp"] } }
+    }));
+
+    try {
+      const { exitCode, stderr } = await run(["uninstall"], { env: { HOME: fakeHome, DECOY_TOKEN: "" } });
+      assert.equal(exitCode, 1);
+      assert.match(stderr, /--confirm/);
+    } finally {
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
   });
 });
 
@@ -149,14 +162,14 @@ describe("doctor", () => {
 
 describe("upgrade", () => {
   it("upgrade shows dashboard URL, no card flags", async () => {
-    const { stderr } = await run(["upgrade"]);
+    const { stderr } = await run(["upgrade"], { env: { DECOY_TOKEN: "", HOME: "/nonexistent" } });
     assert.match(stderr, /dashboard/i);
     assert.ok(!stderr.includes("card-number"), "should not mention card-number flag");
     assert.ok(!stderr.includes("4242"), "should not show test card number");
   });
 
   it("upgrade --json returns URL", async () => {
-    const { stdout } = await run(["upgrade", "--json"]);
+    const { stdout } = await run(["upgrade", "--json"], { env: { DECOY_TOKEN: "", HOME: "/nonexistent" } });
     const result = JSON.parse(stdout);
     assert.ok(result.url, "should have url field");
     assert.match(result.url, /dashboard/);

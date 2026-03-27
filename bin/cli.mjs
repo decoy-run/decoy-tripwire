@@ -581,10 +581,11 @@ async function status(flags) {
 
 // #19: Upgrade via dashboard only. Card numbers in CLI flags leak to ps/history.
 async function upgrade(flags) {
-  const token = requireToken(flags);
+  const token = findToken(flags);
 
   if (flags.json) {
-    out(JSON.stringify({ url: `${DECOY_URL}/dashboard?token=${token}` }));
+    const url = token ? `${DECOY_URL}/dashboard?token=${token}` : `${DECOY_URL}/dashboard`;
+    out(JSON.stringify({ url }));
     return;
   }
 
