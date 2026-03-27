@@ -1,17 +1,17 @@
-# decoy-mcp
+# decoy-tripwire
 
-Know when your agents are compromised. Tripwire detection for AI agents.
+MCP security scanning and tripwire detection for AI agents.
 
-[![npm](https://img.shields.io/npm/v/decoy-mcp)](https://www.npmjs.com/package/decoy-mcp)
+[![npm](https://img.shields.io/npm/v/decoy-tripwire)](https://www.npmjs.com/package/decoy-tripwire)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ```bash
-npx decoy-scan        # 1. Find risks
-npx decoy-mcp init    # 2. Install tripwires
-npx decoy-mcp test    # 3. Verify setup
+npx decoy-scan            # 1. Find risks
+npx decoy-tripwire init   # 2. Install tripwires
+npx decoy-tripwire test   # 3. Verify setup
 ```
 
-Decoy MCP adds a tripwire server alongside your real MCP tools — 12 built-in decoy tools plus dynamically generated tools unique to your deployment. Tools like `execute_command`, `aws_iam_create_admin_role`, and `vault_unseal` that no legitimate agent should ever call. When a prompt injection attack tricks your agent into calling one, Decoy captures the full payload and alerts you instantly.
+Decoy Tripwire adds a tripwire server alongside your real MCP tools — 12 built-in decoy tools plus dynamically generated tools unique to your deployment. Tools like `execute_command`, `aws_iam_create_admin_role`, and `vault_unseal` that no legitimate agent should ever call. When a prompt injection triggers one, Decoy captures the full payload and alerts you immediately.
 
 Every tool returns a realistic error response. The agent sees a timeout or permission denied — not a detection signal. Attackers don't know they've been caught.
 
@@ -20,9 +20,9 @@ Every tool returns a realistic error response. The agent sees a timeout or permi
 ## Get Started
 
 ```bash
-npx decoy-mcp init                    # Sign up and install
-npx decoy-mcp init --no-account       # Install for agent self-signup
-npx decoy-mcp login --token=xxx       # Log in with existing token
+npx decoy-tripwire init                    # Sign up and install
+npx decoy-tripwire init --no-account       # Install for agent self-signup
+npx decoy-tripwire login --token=xxx       # Log in with existing token
 ```
 
 ## Tripwire Tools
@@ -48,25 +48,25 @@ Plus dynamically generated tools from 6 threat categories (cloud infrastructure,
 
 ```bash
 # Setup
-npx decoy-mcp init                    # Sign up and install tripwires
-npx decoy-mcp login --token=xxx       # Log in with existing token
-npx decoy-mcp doctor                  # Diagnose setup issues
-npx decoy-mcp update                  # Update local server to latest
-npx decoy-mcp uninstall --confirm     # Remove from all MCP hosts
+npx decoy-tripwire init                    # Sign up and install tripwires
+npx decoy-tripwire login --token=xxx       # Log in with existing token
+npx decoy-tripwire doctor                  # Diagnose setup issues
+npx decoy-tripwire update                  # Update local server to latest
+npx decoy-tripwire uninstall --confirm     # Remove from all MCP hosts
 
 # Monitor
-npx decoy-mcp test                    # Send a test trigger
-npx decoy-mcp status                  # Check triggers and endpoint
-npx decoy-mcp watch                   # Live tail of triggers
+npx decoy-tripwire test                    # Send a test trigger
+npx decoy-tripwire status                  # Check triggers and endpoint
+npx decoy-tripwire watch                   # Live tail of triggers
 
 # Manage
-npx decoy-mcp agents                  # List connected agents
-npx decoy-mcp agents pause <name>     # Pause tripwires for an agent
-npx decoy-mcp agents resume <name>    # Resume tripwires for an agent
-npx decoy-mcp config                  # View alert configuration
-npx decoy-mcp config --slack=URL      # Set Slack webhook
-npx decoy-mcp config --webhook=URL    # Set webhook URL
-npx decoy-mcp upgrade                 # Upgrade to Pro (via dashboard)
+npx decoy-tripwire agents                  # List connected agents
+npx decoy-tripwire agents pause <name>     # Pause tripwires for an agent
+npx decoy-tripwire agents resume <name>    # Resume tripwires for an agent
+npx decoy-tripwire config                  # View alert configuration
+npx decoy-tripwire config --slack=URL      # Set Slack webhook
+npx decoy-tripwire config --webhook=URL    # Set webhook URL
+npx decoy-tripwire upgrade                 # Upgrade to Pro (via dashboard)
 ```
 
 All commands support `--json` for machine-readable output and `--token=xxx` to specify a token.
@@ -114,7 +114,7 @@ Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard).
 Works without an account. Without a `DECOY_TOKEN`, triggers are logged to stderr. Zero network dependencies.
 
 ```bash
-npx decoy-mcp init --no-account
+npx decoy-tripwire init --no-account
 # Triggers logged locally: [decoy] TRIGGER CRITICAL execute_command {...}
 ```
 

@@ -1,4 +1,4 @@
-// decoy-mcp server (MCP protocol handler) tests
+// decoy-tripwire server (MCP protocol handler) tests
 // Run: node --test test/server.test.mjs
 
 import { describe, it, afterEach } from "node:test";

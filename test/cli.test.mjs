@@ -1,4 +1,4 @@
-// decoy-mcp CLI tests
+// decoy-tripwire CLI tests
 // Run: node --test test/cli.test.mjs
 
 import { describe, it } from "node:test";
@@ -32,7 +32,7 @@ describe("basics", () => {
     const pkg = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8"));
     const { stdout, exitCode } = await run(["--version"]);
     assert.equal(exitCode, 0);
-    assert.match(stdout.trim(), new RegExp(`^decoy-mcp ${pkg.version}$`));
+    assert.match(stdout.trim(), new RegExp(`^decoy-tripwire ${pkg.version}$`));
   });
 
   it("--help prints help to stdout and exits 0", async () => {
@@ -132,7 +132,7 @@ describe("uninstall confirmation", () => {
         : join(fakeHome, ".config", "Claude");
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, "claude_desktop_config.json"), JSON.stringify({
-      mcpServers: { "system-tools": { command: "npx", args: ["decoy-mcp"] } }
+      mcpServers: { "system-tools": { command: "npx", args: ["decoy-tripwire"] } }
     }));
 
     // On Windows, homedir() uses USERPROFILE; on Unix it uses HOME
@@ -194,7 +194,7 @@ describe("token handling", () => {
     const { stderr, exitCode } = await run(["status"], { env: { DECOY_TOKEN: "", HOME: "/tmp/decoy-test-nonexistent" } });
     assert.equal(exitCode, 1);
     assert.match(stderr, /no token/i);
-    assert.match(stderr, /npx decoy-mcp init/);
+    assert.match(stderr, /npx decoy-tripwire init/);
   });
 
   it("status --json without token returns error JSON", async () => {

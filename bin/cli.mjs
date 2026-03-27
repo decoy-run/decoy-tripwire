@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// decoy-mcp CLI — security tripwires for AI agents
+// decoy-tripwire CLI — security tripwires for AI agents
 
 import { createInterface } from "node:readline";
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
@@ -160,10 +160,10 @@ function parseArgs(args) {
 function requireToken(flags) {
   const token = findToken(flags);
   if (token) return token;
-  if (flags.json) { out(JSON.stringify({ error: "No token found. Run `npx decoy-mcp init` or pass --token" })); process.exit(1); }
+  if (flags.json) { out(JSON.stringify({ error: "No token found. Run `npx decoy-tripwire init` or pass --token" })); process.exit(1); }
   log(`  ${c.red}error:${c.reset} No token found.`);
   log("");
-  log(`  ${c.dim}Set up first:${c.reset}  npx decoy-mcp init`);
+  log(`  ${c.dim}Set up first:${c.reset}  npx decoy-tripwire init`);
   log(`  ${c.dim}Or pass:${c.reset}       --token=YOUR_TOKEN`);
   log(`  ${c.dim}Or set:${c.reset}        export DECOY_TOKEN=YOUR_TOKEN`);
   log("");
@@ -313,7 +313,7 @@ async function init(flags) {
   }
   if (!email || !email.includes("@")) {
     log(`  ${c.red}error:${c.reset} Invalid email address.`);
-    log(`  ${c.dim}Usage: npx decoy-mcp init --email=you@company.com${c.reset}`);
+    log(`  ${c.dim}Usage: npx decoy-tripwire init --email=you@company.com${c.reset}`);
     process.exit(1);
   }
 
@@ -328,7 +328,7 @@ async function init(flags) {
     if (e.message.includes("already exists")) {
       log(`  ${c.dim}Account exists for ${email}. Log in instead:${c.reset}`);
       log("");
-      log(`  ${c.dim}$${c.reset} npx decoy-mcp login --token=YOUR_TOKEN`);
+      log(`  ${c.dim}$${c.reset} npx decoy-tripwire login --token=YOUR_TOKEN`);
       log("");
       log(`  ${c.dim}Find your token in your welcome email or at ${DECOY_URL}/login${c.reset}`);
       process.exit(1);
@@ -368,7 +368,7 @@ async function init(flags) {
   log(`  ${c.dim}Dashboard:${c.reset} ${c.orange}${DECOY_URL}/dashboard${c.reset}`);
   log("");
   log(`  ${c.bold}Next:${c.reset} Restart your MCP host, then verify with:`);
-  log(`  ${c.dim}$${c.reset} npx decoy-mcp test`);
+  log(`  ${c.dim}$${c.reset} npx decoy-tripwire test`);
   log("");
 }
 
@@ -433,7 +433,7 @@ async function login(flags) {
   log(`  ${c.dim}Dashboard:${c.reset} ${c.orange}${DECOY_URL}/dashboard${c.reset}`);
   log("");
   log(`  ${c.bold}Next:${c.reset} Restart your MCP host, then verify with:`);
-  log(`  ${c.dim}$${c.reset} npx decoy-mcp test`);
+  log(`  ${c.dim}$${c.reset} npx decoy-tripwire test`);
   log("");
 }
 
@@ -462,7 +462,7 @@ async function test(flags) {
       sp.stop();
       if (flags.json) { out(JSON.stringify({ error: `HTTP ${res.status}` })); process.exit(1); }
       log(`  ${c.red}error:${c.reset} Trigger failed (HTTP ${res.status}).`);
-      log(`  ${c.dim}Your token may be invalid. Run: npx decoy-mcp doctor${c.reset}`);
+      log(`  ${c.dim}Your token may be invalid. Run: npx decoy-tripwire doctor${c.reset}`);
       process.exit(1);
     }
 
@@ -481,7 +481,7 @@ async function test(flags) {
     log(`  ${data.count} total trigger${data.count !== 1 ? "s" : ""} on this endpoint`);
     log("");
     log(`  ${c.bold}Next:${c.reset} Watch triggers in real time:`);
-    log(`  ${c.dim}$${c.reset} npx decoy-mcp watch`);
+    log(`  ${c.dim}$${c.reset} npx decoy-tripwire watch`);
   } catch (e) {
     sp.stop();
     if (flags.json) { out(JSON.stringify({ error: e.message })); process.exit(1); }
@@ -566,7 +566,7 @@ async function status(flags) {
       log(`  ${c.dim}No triggers yet.${c.reset}`);
       log("");
       log(`  ${c.bold}Next:${c.reset} Send a test trigger to verify your setup:`);
-      log(`  ${c.dim}$${c.reset} npx decoy-mcp test`);
+      log(`  ${c.dim}$${c.reset} npx decoy-tripwire test`);
     }
     log("");
     log(`  ${c.dim}Dashboard:${c.reset} ${c.orange}${DECOY_URL}/dashboard${c.reset}`);
@@ -689,7 +689,7 @@ function update(flags) {
     log(`  ${c.dim}No installations found.${c.reset}`);
     log("");
     log(`  ${c.bold}Next:${c.reset} Set up first:`);
-    log(`  ${c.dim}$${c.reset} npx decoy-mcp init`);
+    log(`  ${c.dim}$${c.reset} npx decoy-tripwire init`);
   } else {
     log("");
     log(`  Restart your MCP hosts to use v${VERSION}.`);
@@ -768,9 +768,9 @@ async function setAgentStatus(agentName, newStatus, flags) {
   if (!agentName) {
     if (flags.json) { out(JSON.stringify({ error: "Agent name required" })); process.exit(1); }
     log(`  ${c.red}error:${c.reset} Agent name required.`);
-    log(`  ${c.dim}Usage: npx decoy-mcp agents ${newStatus === "paused" ? "pause" : "resume"} <agent-name>${c.reset}`);
+    log(`  ${c.dim}Usage: npx decoy-tripwire agents ${newStatus === "paused" ? "pause" : "resume"} <agent-name>${c.reset}`);
     log("");
-    log(`  ${c.dim}List agents:${c.reset} npx decoy-mcp agents`);
+    log(`  ${c.dim}List agents:${c.reset} npx decoy-tripwire agents`);
     process.exit(1);
   }
 
@@ -885,9 +885,9 @@ async function config(flags) {
     printAlerts(data.alerts);
     log("");
     log(`  ${c.bold}Update:${c.reset}`);
-    log(`  ${c.dim}$${c.reset} npx decoy-mcp config --slack=https://hooks.slack.com/...`);
-    log(`  ${c.dim}$${c.reset} npx decoy-mcp config --webhook=https://your-url.com/hook`);
-    log(`  ${c.dim}$${c.reset} npx decoy-mcp config --email=false`);
+    log(`  ${c.dim}$${c.reset} npx decoy-tripwire config --slack=https://hooks.slack.com/...`);
+    log(`  ${c.dim}$${c.reset} npx decoy-tripwire config --webhook=https://your-url.com/hook`);
+    log(`  ${c.dim}$${c.reset} npx decoy-tripwire config --email=false`);
     log("");
   } catch (e) {
     sp.stop();
@@ -1016,7 +1016,7 @@ async function doctor(flags) {
           issues++;
         } else if (!serverExists) {
           log(`  ${c.red}✗${c.reset} ${host.name} — server.mjs missing at ${serverPath}`);
-          log(`    ${c.dim}Fix: npx decoy-mcp update${c.reset}`);
+          log(`    ${c.dim}Fix: npx decoy-tripwire update${c.reset}`);
           issues++;
         } else {
           log(`  ${c.green}✓${c.reset} ${host.name}`);
@@ -1033,7 +1033,7 @@ async function doctor(flags) {
 
   if (installed.length === 0) {
     log(`  ${c.red}✗${c.reset} No MCP hosts configured`);
-    log(`    ${c.dim}Fix: npx decoy-mcp init${c.reset}`);
+    log(`    ${c.dim}Fix: npx decoy-tripwire init${c.reset}`);
     issues++;
   }
 
@@ -1077,7 +1077,7 @@ async function doctor(flags) {
     log(`  ${c.green}✓${c.reset} Server source present`);
   } else {
     log(`  ${c.red}✗${c.reset} Server source missing`);
-    log(`    ${c.dim}Try reinstalling: npm install -g decoy-mcp${c.reset}`);
+    log(`    ${c.dim}Try reinstalling: npm install -g decoy-tripwire${c.reset}`);
     issues++;
   }
 
@@ -1202,11 +1202,11 @@ function timeAgo(isoString) {
 // ─── Help ───
 
 function showHelp() {
-  out(`${c.bold}decoy-mcp${c.reset}
+  out(`${c.bold}decoy-tripwire${c.reset}
 Know when your agents are compromised.
 
 ${c.bold}Usage:${c.reset}
-  decoy-mcp [command]
+  decoy-tripwire [command]
 
 ${c.bold}Getting started:${c.reset}
   ${c.dim}Start with${c.reset} npx decoy-scan ${c.dim}to see what's at risk, then come back to add protection.${c.reset}
@@ -1242,7 +1242,7 @@ ${c.bold}Flags:${c.reset}
   -V, --version         Show version
   -h, --help            Show this help
 
-Use "decoy-mcp [command] --help" for more information about a command.
+Use "decoy-tripwire [command] --help" for more information about a command.
 `);
 }
 
@@ -1255,7 +1255,7 @@ const { flags } = parseArgs(args.slice(subcmd ? 2 : 1));
 
 // Global --version
 if (args.includes("--version") || args.includes("-V")) {
-  out(`decoy-mcp ${VERSION}`);
+  out(`decoy-tripwire ${VERSION}`);
   process.exit(0);
 }
 
@@ -1326,7 +1326,7 @@ switch (cmd) {
     // #12: Unknown commands should error, not silently show help.
     if (cmd) {
       log(`  ${c.red}error:${c.reset} Unknown command "${cmd}".`);
-      log(`  ${c.dim}Run ${c.bold}decoy-mcp --help${c.reset}${c.dim} to see available commands.${c.reset}`);
+      log(`  ${c.dim}Run ${c.bold}decoy-tripwire --help${c.reset}${c.dim} to see available commands.${c.reset}`);
       log("");
       process.exit(1);
     }

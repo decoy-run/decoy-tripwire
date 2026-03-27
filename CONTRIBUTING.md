@@ -71,7 +71,7 @@ node bin/cli.mjs status --json --token=YOUR_TOKEN
 
 ```
 server/server.mjs   # MCP server (the thing that gets installed on user machines)
-bin/cli.mjs          # CLI commands (npx decoy-mcp ...)
+bin/cli.mjs          # CLI commands (npx decoy-tripwire ...)
 package.json         # npm package config
 ```
 

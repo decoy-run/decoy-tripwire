@@ -9,7 +9,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in decoy-mcp, please report it responsibly.
+If you discover a security vulnerability in decoy-tripwire, please report it responsibly.
 
 **Email:** security@decoy.run
 
@@ -30,6 +30,6 @@ If you discover a security vulnerability in decoy-mcp, please report it responsi
 
 ## Scope
 
-This policy covers the `decoy-mcp` npm package, including the CLI (`bin/cli.mjs`) and MCP server (`server/server.mjs`).
+This policy covers the `decoy-tripwire` npm package, including the CLI (`bin/cli.mjs`) and MCP server (`server/server.mjs`).
 
 Issues in the Decoy cloud service (app.decoy.run) should also be reported to security@decoy.run.

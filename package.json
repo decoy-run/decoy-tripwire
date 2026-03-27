@@ -1,9 +1,9 @@
 {
-  "name": "decoy-mcp",
+  "name": "decoy-tripwire",
   "version": "0.9.1",
   "description": "Security tripwires for AI agents. Detect prompt injection in real time.",
   "bin": {
-    "decoy-mcp": "bin/cli.mjs"
+    "decoy-tripwire": "bin/cli.mjs"
   },
   "type": "module",
   "files": [
@@ -27,7 +27,7 @@
   "homepage": "https://decoy.run",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/decoy-run/decoy-mcp.git"
+    "url": "git+https://github.com/decoy-run/decoy-tripwire.git"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs"

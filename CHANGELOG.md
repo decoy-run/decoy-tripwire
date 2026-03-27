@@ -74,4 +74,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Initial release: security tripwires for AI agents
 - 12 built-in tripwire tools
 - Real-time prompt injection detection
-- CLI interface (`decoy-mcp`)
+- CLI interface (`decoy-tripwire`)

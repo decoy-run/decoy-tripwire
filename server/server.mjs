@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Decoy MCP Server — stdio transport
+// Decoy Tripwire Server — stdio transport
 // Runs locally, forwards triggers to decoy.run
 //
 // Usage in claude_desktop_config.json:

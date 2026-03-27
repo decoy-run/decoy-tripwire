@@ -9,9 +9,9 @@ Decoy is a security tripwire system for AI agent pipelines. It deploys honeypot 
 ## 2. Repo Structure
 
 ```
-decoy-mcp/
+decoy-tripwire/
 ├── server/server.mjs   # MCP server (stdio transport, zero dependencies)
-├── bin/cli.mjs          # CLI (npx decoy-mcp ...)
+├── bin/cli.mjs          # CLI (npx decoy-tripwire ...)
 ├── package.json
 ├── README.md
 ├── AGENTS.md            # You are here
