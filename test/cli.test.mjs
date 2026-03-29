@@ -153,12 +153,12 @@ describe("uninstall confirmation", () => {
 // ─── Doctor ───
 
 describe("doctor", () => {
-  it("doctor --json returns error", async () => {
-    const { stdout, exitCode } = await run(["doctor", "--json"]);
-    assert.equal(exitCode, 1);
+  it("doctor --json returns structured output", async () => {
+    const { stdout } = await run(["doctor", "--json"]);
     const result = JSON.parse(stdout);
-    assert.ok(result.error, "should have error field");
-    assert.match(result.error, /does not support --json/);
+    assert.ok(typeof result.ok === "boolean", "should have ok field");
+    assert.ok(typeof result.issues === "number", "should have issues count");
+    assert.ok(Array.isArray(result.checks), "should have checks array");
   });
 
   it("doctor without --json runs checks", async () => {

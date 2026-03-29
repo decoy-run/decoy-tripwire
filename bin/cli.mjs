@@ -618,8 +618,8 @@ async function uninstall(flags) {
     return;
   }
 
-  // Require confirmation
-  if (!flags.confirm) {
+  // Require confirmation (--confirm or --yes)
+  if (!flags.confirm && !flags.yes) {
     if (!process.stdin.isTTY) {
       log(`  ${c.red}error:${c.reset} Uninstall requires confirmation.`);
       log(`  ${c.dim}Pass --confirm to remove decoy from ${hostList.length} host${hostList.length > 1 ? "s" : ""}.${c.reset}`);
@@ -986,12 +986,7 @@ async function watch(flags) {
 }
 
 async function doctor(flags) {
-  // #13: doctor doesn't support --json yet
-  if (flags.json) {
-    out(JSON.stringify({ error: "doctor does not support --json yet" }));
-    process.exit(1);
-  }
-
+  const checks = [];
   let issues = 0;
   let token = null;
 
@@ -1012,73 +1007,100 @@ async function doctor(flags) {
         const serverExists = serverPath && existsSync(serverPath);
 
         if (!hasToken) {
-          log(`  ${c.red}✗${c.reset} ${host.name} — no DECOY_TOKEN in config`);
+          checks.push({ check: "host", name: host.name, ok: false, error: "no DECOY_TOKEN in config" });
+          if (!flags.json) log(`  ${c.red}✗${c.reset} ${host.name} — no DECOY_TOKEN in config`);
           issues++;
         } else if (!serverExists) {
-          log(`  ${c.red}✗${c.reset} ${host.name} — server.mjs missing at ${serverPath}`);
-          log(`    ${c.dim}Fix: npx decoy-tripwire update${c.reset}`);
+          checks.push({ check: "host", name: host.name, ok: false, error: "server.mjs missing", fix: "npx decoy-tripwire update" });
+          if (!flags.json) {
+            log(`  ${c.red}✗${c.reset} ${host.name} — server.mjs missing at ${serverPath}`);
+            log(`    ${c.dim}Fix: npx decoy-tripwire update${c.reset}`);
+          }
           issues++;
         } else {
-          log(`  ${c.green}✓${c.reset} ${host.name}`);
+          checks.push({ check: "host", name: host.name, ok: true });
+          if (!flags.json) log(`  ${c.green}✓${c.reset} ${host.name}`);
           installed.push(id);
           if (!token) token = entry.env.DECOY_TOKEN;
         }
       }
     } catch (e) {
-      log(`  ${c.red}✗${c.reset} ${host.name} — config parse error`);
-      log(`    ${c.dim}${e.message}${c.reset}`);
+      checks.push({ check: "host", name: host.name, ok: false, error: e.message });
+      if (!flags.json) {
+        log(`  ${c.red}✗${c.reset} ${host.name} — config parse error`);
+        log(`    ${c.dim}${e.message}${c.reset}`);
+      }
       issues++;
     }
   }
 
   if (installed.length === 0) {
-    log(`  ${c.red}✗${c.reset} No MCP hosts configured`);
-    log(`    ${c.dim}Fix: npx decoy-tripwire init${c.reset}`);
+    checks.push({ check: "host", name: "any", ok: false, error: "No MCP hosts configured", fix: "npx decoy-tripwire init" });
+    if (!flags.json) {
+      log(`  ${c.red}✗${c.reset} No MCP hosts configured`);
+      log(`    ${c.dim}Fix: npx decoy-tripwire init${c.reset}`);
+    }
     issues++;
   }
 
-  log("");
+  if (!flags.json) log("");
 
   // 2. Token
   if (token) {
-    const sp = spinner("Checking token…");
+    const sp = !flags.json ? spinner("Checking token…") : { stop() {} };
     try {
       const res = await fetch(`${DECOY_URL}/api/triggers?token=${token}`);
       if (res.ok) {
         const data = await res.json();
+        checks.push({ check: "token", ok: true, triggers: data.count });
         sp.stop(`  ${c.green}✓${c.reset} Token valid — ${data.count} triggers`);
       } else if (res.status === 401) {
+        checks.push({ check: "token", ok: false, error: "Token rejected" });
         sp.stop(`  ${c.red}✗${c.reset} Token rejected by server`);
         issues++;
       } else {
+        checks.push({ check: "token", ok: false, error: `Server error (${res.status})` });
         sp.stop(`  ${c.red}✗${c.reset} Server error (${res.status})`);
         issues++;
       }
     } catch (e) {
+      checks.push({ check: "token", ok: false, error: e.message });
       sp.stop(`  ${c.red}✗${c.reset} Cannot reach decoy.run — ${e.message}`);
       issues++;
     }
   } else {
-    log(`  ${c.dim}– Token check skipped (no config)${c.reset}`);
+    checks.push({ check: "token", ok: false, error: "skipped (no config)" });
+    if (!flags.json) log(`  ${c.dim}– Token check skipped (no config)${c.reset}`);
   }
 
   // 3. Node
   const nodeVersion = process.versions.node.split(".").map(Number);
   if (nodeVersion[0] >= 18) {
-    log(`  ${c.green}✓${c.reset} Node.js ${process.versions.node}`);
+    checks.push({ check: "node", ok: true, version: process.versions.node });
+    if (!flags.json) log(`  ${c.green}✓${c.reset} Node.js ${process.versions.node}`);
   } else {
-    log(`  ${c.red}✗${c.reset} Node.js ${process.versions.node} — requires 18+`);
+    checks.push({ check: "node", ok: false, version: process.versions.node, error: "requires 18+" });
+    if (!flags.json) log(`  ${c.red}✗${c.reset} Node.js ${process.versions.node} — requires 18+`);
     issues++;
   }
 
   // 4. Server source
   const serverSrc = getServerPath();
   if (existsSync(serverSrc)) {
-    log(`  ${c.green}✓${c.reset} Server source present`);
+    checks.push({ check: "server", ok: true });
+    if (!flags.json) log(`  ${c.green}✓${c.reset} Server source present`);
   } else {
-    log(`  ${c.red}✗${c.reset} Server source missing`);
-    log(`    ${c.dim}Try reinstalling: npm install -g decoy-tripwire${c.reset}`);
+    checks.push({ check: "server", ok: false, error: "missing", fix: "npm install -g decoy-tripwire" });
+    if (!flags.json) {
+      log(`  ${c.red}✗${c.reset} Server source missing`);
+      log(`    ${c.dim}Try reinstalling: npm install -g decoy-tripwire${c.reset}`);
+    }
     issues++;
+  }
+
+  if (flags.json) {
+    out(JSON.stringify({ ok: issues === 0, issues, checks }));
+    process.exit(issues > 0 ? 1 : 0);
   }
 
   log("");
@@ -1206,29 +1228,25 @@ function showHelp() {
 Know when your agents are compromised.
 
 ${c.bold}Usage:${c.reset}
-  decoy-tripwire [command]
+  decoy-tripwire [command] [flags]
 
 ${c.bold}Getting started:${c.reset}
-  ${c.dim}Start with${c.reset} npx decoy-scan ${c.dim}to see what's at risk, then come back to add protection.${c.reset}
-
   init                          Sign up and install tripwires
   init --no-account             Install without account (agent self-signup)
   login                         Log in with an existing token
   doctor                        Diagnose setup issues
 
-${c.bold}Monitor commands:${c.reset}
+${c.bold}Monitor:${c.reset}
   test                          Send a test trigger to verify setup
   status                        Check triggers and endpoint
   watch                         Live tail of triggers
 
-${c.bold}Manage commands:${c.reset}
+${c.bold}Manage:${c.reset}
   agents                        List connected agents
   agents pause <name>           Pause tripwires for an agent
   agents resume <name>          Resume tripwires for an agent
   config                        View or update alert configuration
   upgrade                       Upgrade to Pro
-
-${c.bold}Other commands:${c.reset}
   update                        Update local server to latest version
   uninstall                     Remove from all MCP hosts
 
@@ -1236,13 +1254,22 @@ ${c.bold}Flags:${c.reset}
       --token string    API token (or set DECOY_TOKEN env var)
       --host string     Target host: claude-desktop, cursor, windsurf, vscode, claude-code
       --json            Machine-readable JSON output
+      --yes             Skip confirmation prompts
   -q, --quiet           Suppress status output
       --no-color        Disable colored output
-      --color           Force colored output
   -V, --version         Show version
   -h, --help            Show this help
 
-Use "decoy-tripwire [command] --help" for more information about a command.
+${c.bold}Examples:${c.reset}
+  npx decoy-tripwire init --email=you@company.com
+  npx decoy-tripwire init --email=you@company.com --host=claude-desktop
+  npx decoy-tripwire test --token=abc123
+  npx decoy-tripwire status --json | jq .triggers
+  npx decoy-tripwire watch --interval=10
+  npx decoy-tripwire config --slack=https://hooks.slack.com/...
+  npx decoy-tripwire agents pause suspicious-agent
+  npx decoy-tripwire uninstall --yes
+  npx decoy-tripwire doctor --json
 `);
 }
 
