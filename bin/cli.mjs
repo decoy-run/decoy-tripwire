@@ -163,6 +163,8 @@ function requireToken(flags) {
   if (flags.json) { out(JSON.stringify({ error: "No token found. Run `npx decoy-tripwire init` or pass --token" })); process.exit(1); }
   log(`  ${c.red}error:${c.reset} No token found.`);
   log("");
+  log(`  ${c.dim}Hint: Run 'npx decoy-tripwire init' to set up${c.reset}`);
+  log("");
   log(`  ${c.dim}Set up first:${c.reset}  npx decoy-tripwire init`);
   log(`  ${c.dim}Or pass:${c.reset}       --token=YOUR_TOKEN`);
   log(`  ${c.dim}Or set:${c.reset}        export DECOY_TOKEN=YOUR_TOKEN`);
@@ -398,7 +400,7 @@ async function login(flags) {
   } catch (e) {
     sp.stop();
     log(`  ${c.red}error:${c.reset} Could not reach decoy.run — ${e.message}`);
-    log(`  ${c.dim}Check your network connection and try again.${c.reset}`);
+    log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
     process.exit(1);
   }
 
@@ -462,7 +464,7 @@ async function test(flags) {
       sp.stop();
       if (flags.json) { out(JSON.stringify({ error: `HTTP ${res.status}` })); process.exit(1); }
       log(`  ${c.red}error:${c.reset} Trigger failed (HTTP ${res.status}).`);
-      log(`  ${c.dim}Your token may be invalid. Run: npx decoy-tripwire doctor${c.reset}`);
+      log(`  ${c.dim}Hint: Your token may be invalid. Run 'npx decoy-tripwire doctor' to diagnose${c.reset}`);
       process.exit(1);
     }
 
@@ -486,7 +488,7 @@ async function test(flags) {
     sp.stop();
     if (flags.json) { out(JSON.stringify({ error: e.message })); process.exit(1); }
     log(`  ${c.red}error:${c.reset} ${e.message}`);
-    log(`  ${c.dim}Check your network connection and try again.${c.reset}`);
+    log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
   }
   log("");
 }
@@ -513,6 +515,11 @@ async function status(flags) {
     const isPro = (configData.plan || "free") !== "free";
     const scanData = loadScanResults();
     sp.stop();
+
+    if (flags.json && flags.brief) {
+      out(JSON.stringify({ configured: true, token: token.slice(0, 8) + "...", triggers: data.count || 0, status: "active" }));
+      return;
+    }
 
     if (flags.json) {
       const jsonOut = { token: token.slice(0, 8) + "...", count: data.count || 0, triggers: data.triggers?.slice(0, 5) || [], dashboard: `${DECOY_URL}/dashboard?token=${token}` };
@@ -574,7 +581,7 @@ async function status(flags) {
     sp.stop();
     if (flags.json) { out(JSON.stringify({ error: e.message })); process.exit(1); }
     log(`  ${c.red}error:${c.reset} ${e.message}`);
-    log(`  ${c.dim}Check your network connection and try again.${c.reset}`);
+    log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
   }
   log("");
 }
@@ -688,8 +695,7 @@ function update(flags) {
   if (updated === 0) {
     log(`  ${c.dim}No installations found.${c.reset}`);
     log("");
-    log(`  ${c.bold}Next:${c.reset} Set up first:`);
-    log(`  ${c.dim}$${c.reset} npx decoy-tripwire init`);
+    log(`  ${c.dim}Hint: Run 'npx decoy-tripwire init' to set up${c.reset}`);
   } else {
     log("");
     log(`  Restart your MCP hosts to use v${VERSION}.`);
@@ -713,6 +719,14 @@ async function agents(flags) {
     }
 
     sp.stop();
+
+    if (flags.json && flags.brief) {
+      const agentList = data.agents || [];
+      const active = agentList.filter(a => a.status === "active").length;
+      const paused = agentList.filter(a => a.status === "paused").length;
+      out(JSON.stringify({ count: agentList.length, active, paused }));
+      return;
+    }
 
     if (flags.json) {
       out(JSON.stringify(data));
@@ -749,7 +763,7 @@ async function agents(flags) {
     sp.stop();
     if (flags.json) { out(JSON.stringify({ error: e.message })); process.exit(1); }
     log(`  ${c.red}error:${c.reset} ${e.message}`);
-    log(`  ${c.dim}Check your network connection and try again.${c.reset}`);
+    log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
   }
   log("");
 }
@@ -893,7 +907,7 @@ async function config(flags) {
     sp.stop();
     if (flags.json) { out(JSON.stringify({ error: e.message })); process.exit(1); }
     log(`  ${c.red}error:${c.reset} ${e.message}`);
-    log(`  ${c.dim}Check your network connection and try again.${c.reset}`);
+    log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
   }
 }
 
@@ -1254,6 +1268,7 @@ ${c.bold}Flags:${c.reset}
       --token string    API token (or set DECOY_TOKEN env var)
       --host string     Target host: claude-desktop, cursor, windsurf, vscode, claude-code
       --json            Machine-readable JSON output
+      --brief           Minimal summary (use with --json)
       --yes             Skip confirmation prompts
   -q, --quiet           Suppress status output
       --no-color        Disable colored output
@@ -1261,15 +1276,18 @@ ${c.bold}Flags:${c.reset}
   -h, --help            Show this help
 
 ${c.bold}Examples:${c.reset}
-  npx decoy-tripwire init --email=you@company.com
-  npx decoy-tripwire init --email=you@company.com --host=claude-desktop
-  npx decoy-tripwire test --token=abc123
-  npx decoy-tripwire status --json | jq .triggers
-  npx decoy-tripwire watch --interval=10
-  npx decoy-tripwire config --slack=https://hooks.slack.com/...
-  npx decoy-tripwire agents pause suspicious-agent
-  npx decoy-tripwire uninstall --yes
-  npx decoy-tripwire doctor --json
+  npx decoy-tripwire init                 Set up tripwires (start here)
+  npx decoy-tripwire status               Check tripwire status
+  npx decoy-tripwire status --json        Machine-readable status
+  npx decoy-tripwire test                 Fire a test trigger
+  npx decoy-tripwire scan                 Scan MCP servers (redirects to decoy-scan)
+  npx decoy-tripwire agents               List connected agents
+  npx decoy-tripwire agents --json        Agent list as JSON
+  npx decoy-tripwire watch                Live trigger monitoring
+
+${c.bold}Agent integration:${c.reset}
+  This CLI ships with AGENTS.md for AI agent reference.
+  Use --json for structured output. Use --brief for minimal summaries.
 `);
 }
 
@@ -1296,6 +1314,9 @@ if (args.includes("--help") || args.includes("-h")) {
 function run(fn) {
   fn(flags).catch(e => {
     log(`  ${c.red}error:${c.reset} ${e.message}`);
+    if (e.message.includes("fetch") || e.message.includes("ENOTFOUND") || e.message.includes("ECONNREFUSED") || e.message.includes("network")) {
+      log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
+    }
     process.exit(1);
   });
 }
@@ -1353,7 +1374,7 @@ switch (cmd) {
     // #12: Unknown commands should error, not silently show help.
     if (cmd) {
       log(`  ${c.red}error:${c.reset} Unknown command "${cmd}".`);
-      log(`  ${c.dim}Run ${c.bold}decoy-tripwire --help${c.reset}${c.dim} to see available commands.${c.reset}`);
+      log(`  ${c.dim}Hint: Run 'npx decoy-tripwire --help' to see available commands${c.reset}`);
       log("");
       process.exit(1);
     }
