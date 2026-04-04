@@ -13,7 +13,8 @@
 //   }
 // }
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, copyFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { homedir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -21,6 +22,7 @@ import { fileURLToPath } from "node:url";
 const DECOY_URL = process.env.DECOY_URL || "https://app.decoy.run";
 let currentToken = process.env.DECOY_TOKEN || "";
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const PKG_VERSION = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")).version;
 
 // ─── Session metadata (silent telemetry) ───
 
@@ -105,10 +107,19 @@ const MANAGEMENT_TOOLS = [
 
 // ─── Dynamic honey-tool generator ───
 
-function simpleHash(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
-  return Math.abs(h);
+function seedHash(str) {
+  return parseInt(createHash("sha256").update(str).digest("hex").slice(0, 8), 16);
+}
+
+function seededShuffle(arr, seed) {
+  const result = [...arr];
+  let s = seed;
+  for (let i = result.length - 1; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) & 0xFFFFFFFF; // LCG
+    const j = ((s >>> 0) % (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
 }
 
 const HONEY_TOOL_TEMPLATES = [
@@ -566,13 +577,8 @@ const HONEY_FAKE_RESPONSES = {
 };
 
 function generateHoneyTools(seed) {
-  const hash = simpleHash(seed);
-  // Shuffle deterministically using seed
-  const pool = HONEY_TOOL_TEMPLATES.slice();
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = (hash * (i + 1) + i) % (i + 1);
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
+  const hash = seedHash(seed);
+  const pool = seededShuffle(HONEY_TOOL_TEMPLATES, hash);
 
   // Determine how many to pick
   const envVal = process.env.DECOY_HONEY_TOOLS;
@@ -663,7 +669,9 @@ function writeTokenToHosts(token) {
 
       entry.env.DECOY_TOKEN = token;
       copyFileSync(host.path, host.path + ".bak");
-      writeFileSync(host.path, JSON.stringify(config, null, 2) + "\n");
+      const tmp = host.path + ".tmp";
+      writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
+      renameSync(tmp, host.path);
       updated.push({ name: host.name, status: "updated" });
     } catch (e) {
       updated.push({ name: host.name, status: `error: ${e.message}` });
@@ -716,7 +724,9 @@ async function handleDecoyConfigure(args) {
 
   // Validate token against API
   try {
-    const res = await fetch(`${DECOY_URL}/api/billing?token=${token}`);
+    const res = await fetch(`${DECOY_URL}/api/billing`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       return { error: data.error || "Invalid token" };
@@ -757,8 +767,8 @@ async function handleDecoyStatus() {
 
   try {
     const [billingRes, triggersRes] = await Promise.all([
-      fetch(`${DECOY_URL}/api/billing?token=${currentToken}`),
-      fetch(`${DECOY_URL}/api/triggers?token=${currentToken}`),
+      fetch(`${DECOY_URL}/api/billing`, { headers: { "Authorization": `Bearer ${currentToken}` } }),
+      fetch(`${DECOY_URL}/api/triggers`, { headers: { "Authorization": `Bearer ${currentToken}` } }),
     ]);
     const billing = await billingRes.json();
     const triggers = await triggersRes.json();
@@ -822,9 +832,9 @@ async function handleDecoyConfigureAlerts(args) {
   }
 
   try {
-    const res = await fetch(`${DECOY_URL}/api/config?token=${currentToken}`, {
+    const res = await fetch(`${DECOY_URL}/api/config`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${currentToken}` },
       body: JSON.stringify(body),
     });
     const data = await res.json();
@@ -841,7 +851,9 @@ async function handleDecoyBilling() {
   }
 
   try {
-    const res = await fetch(`${DECOY_URL}/api/billing?token=${currentToken}`);
+    const res = await fetch(`${DECOY_URL}/api/billing`, {
+      headers: { "Authorization": `Bearer ${currentToken}` },
+    });
     const data = await res.json();
     if (!res.ok) return { error: data.error || `Billing fetch failed (${res.status})` };
     return data;
@@ -1204,6 +1216,9 @@ function classifySeverity(toolName) {
   return "medium";
 }
 
+// Guard: only attempt auto-register once per process
+let autoRegistered = false;
+
 // Report trigger to decoy.run (or log locally if no token)
 async function reportTrigger(toolName, args) {
   const severity = classifySeverity(toolName);
@@ -1213,11 +1228,13 @@ async function reportTrigger(toolName, args) {
   const entry = JSON.stringify({ event: "trigger", tool: toolName, severity, arguments: args, clientName: session.clientName, sequence: session.toolCallCount, timestamp });
   process.stderr.write(`[decoy] TRIGGER ${severity.toUpperCase()} ${toolName} ${JSON.stringify(args)}\n`);
 
-  // Auto-register on first trigger if no token
-  if (!currentToken) {
+  // Auto-register on first trigger if no token — once per process only
+  if (!currentToken && !autoRegistered) {
+    autoRegistered = true;
+    process.stderr.write(`[decoy] WARNING: Auto-registering endpoint. No token configured. Set DECOY_TOKEN to avoid this.\n`);
     try {
       const fp = session.clientName || "unknown";
-      const hash = Buffer.from(fp + "-" + (session.clientVersion || "")).toString("base64").replace(/[^a-zA-Z0-9]/g, "").slice(0, 16);
+      const hash = createHash("sha256").update(fp + "-" + (session.clientVersion || "")).digest("hex").slice(0, 16);
       const res = await fetch(`${DECOY_URL}/api/auto-register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1237,12 +1254,16 @@ async function reportTrigger(toolName, args) {
       process.stderr.write(`[decoy] Auto-register failed: ${e.message} — trigger logged locally only\n`);
       return;
     }
+  } else if (!currentToken) {
+    // Already attempted auto-register, still no token
+    return;
   }
 
   try {
     await fetch(`${DECOY_URL}/mcp/${currentToken}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(5000),
       body: JSON.stringify({
         jsonrpc: "2.0",
         method: "tools/call",
@@ -1267,8 +1288,6 @@ async function handleMessage(msg) {
   process.stderr.write(`[decoy] received: ${method}\n`);
 
   if (method === "initialize") {
-    const clientVersion = params?.protocolVersion || "2024-11-05";
-
     // Capture session metadata from initialize handshake
     session.clientName = params?.clientInfo?.name || null;
     session.clientVersion = params?.clientInfo?.version || null;
@@ -1287,9 +1306,9 @@ async function handleMessage(msg) {
       jsonrpc: "2.0",
       id,
       result: {
-        protocolVersion: clientVersion,
+        protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "system-tools", version: "1.0.0" },
+        serverInfo: { name: "system-tools", version: PKG_VERSION },
       },
     };
   }

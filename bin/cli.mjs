@@ -3,7 +3,7 @@
 // decoy-tripwire CLI — security tripwires for AI agents
 
 import { createInterface } from "node:readline";
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -91,7 +91,7 @@ function cursorConfigPath() {
   return join(home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
 }
 
-function windurfConfigPath() {
+function windsurfConfigPath() {
   const home = homedir();
   if (platform() === "win32") return join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
   if (platform() === "darwin") return join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
@@ -124,7 +124,7 @@ function loadScanResults() {
 const HOSTS = {
   "claude-desktop": { name: "Claude Desktop", configPath: claudeDesktopConfigPath, format: "mcpServers" },
   "cursor": { name: "Cursor", configPath: cursorConfigPath, format: "mcpServers" },
-  "windsurf": { name: "Windsurf", configPath: windurfConfigPath, format: "mcpServers" },
+  "windsurf": { name: "Windsurf", configPath: windsurfConfigPath, format: "mcpServers" },
   "vscode": { name: "VS Code", configPath: vscodeConfigPath, format: "mcp.servers" },
   "claude-code": { name: "Claude Code", configPath: claudeCodeConfigPath, format: "mcpServers" },
 };
@@ -273,7 +273,9 @@ function installToHost(hostId, token) {
     };
   }
 
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  const tmp = configPath + ".tmp";
+  writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
+  renameSync(tmp, configPath);
   return { configPath, serverDst, alreadyConfigured: false };
 }
 
@@ -392,7 +394,9 @@ async function login(flags) {
   // Verify
   const sp = spinner("Verifying token…");
   try {
-    const res = await fetch(`${DECOY_URL}/api/triggers?token=${token}`);
+    const res = await fetch(`${DECOY_URL}/api/triggers`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     if (!res.ok) {
       sp.stop();
       log(`  ${c.red}error:${c.reset} Token not recognized.`);
@@ -471,12 +475,14 @@ async function test(flags) {
       process.exit(1);
     }
 
-    const statusRes = await fetch(`${DECOY_URL}/api/triggers?token=${token}`);
+    const statusRes = await fetch(`${DECOY_URL}/api/triggers`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     const data = await statusRes.json();
     sp.stop();
 
     if (flags.json) {
-      out(JSON.stringify({ ok: true, tool: "execute_command", count: data.count, dashboard: `${DECOY_URL}/dashboard?token=${token}` }));
+      out(JSON.stringify({ ok: true, tool: "execute_command", count: data.count, dashboard: `${DECOY_URL}/dashboard` }));
       return;
     }
 
@@ -502,8 +508,8 @@ async function status(flags) {
   const sp = !flags.json ? spinner("Fetching status…") : { stop() {} };
   try {
     const [triggerRes, configRes] = await Promise.all([
-      fetch(`${DECOY_URL}/api/triggers?token=${token}`),
-      fetch(`${DECOY_URL}/api/config?token=${token}`),
+      fetch(`${DECOY_URL}/api/triggers`, { headers: { "Authorization": `Bearer ${token}` } }),
+      fetch(`${DECOY_URL}/api/config`, { headers: { "Authorization": `Bearer ${token}` } }),
     ]);
     const data = await triggerRes.json().catch(() => ({}));
     const configData = await configRes.json().catch(() => ({}));
@@ -525,7 +531,7 @@ async function status(flags) {
     }
 
     if (flags.json) {
-      const jsonOut = { token: token.slice(0, 8) + "...", count: data.count || 0, triggers: data.triggers?.slice(0, 5) || [], dashboard: `${DECOY_URL}/dashboard?token=${token}` };
+      const jsonOut = { token: token.slice(0, 8) + "...", count: data.count || 0, triggers: data.triggers?.slice(0, 5) || [], dashboard: `${DECOY_URL}/dashboard` };
       if (isPro && scanData) {
         jsonOut.triggers = jsonOut.triggers.map(t => {
           const exposures = findExposures(t.tool, scanData);
@@ -594,7 +600,7 @@ async function upgrade(flags) {
   const token = findToken(flags);
 
   if (flags.json) {
-    const url = token ? `${DECOY_URL}/dashboard?token=${token}` : `${DECOY_URL}/dashboard`;
+    const url = `${DECOY_URL}/dashboard`;
     out(JSON.stringify({ url }));
     return;
   }
@@ -648,7 +654,9 @@ async function uninstall(flags) {
   let removed = 0;
   for (const { host, configPath, config, key } of hostList) {
     delete config[key]["system-tools"];
-    writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    const tmp = configPath + ".tmp";
+    writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
+    renameSync(tmp, configPath);
     log(`  ${c.green}✓${c.reset} Removed from ${host.name}`);
     removed++;
   }
@@ -711,7 +719,9 @@ async function agents(flags) {
   const sp = !flags.json ? spinner("Fetching agents…") : { stop() {} };
 
   try {
-    const res = await fetch(`${DECOY_URL}/api/agents?token=${token}`);
+    const res = await fetch(`${DECOY_URL}/api/agents`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     const data = await res.json();
 
     if (!res.ok) {
@@ -795,9 +805,9 @@ async function setAgentStatus(agentName, newStatus, flags) {
   const sp = spinner(`${verb} ${agentName}…`);
 
   try {
-    const res = await fetch(`${DECOY_URL}/api/agents?token=${token}`, {
+    const res = await fetch(`${DECOY_URL}/api/agents`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
       body: JSON.stringify({ name: agentName, status: newStatus }),
     });
     const data = await res.json();
@@ -842,9 +852,9 @@ async function config(flags) {
 
     const sp = spinner("Updating config…");
     try {
-      const res = await fetch(`${DECOY_URL}/api/config?token=${token}`, {
+      const res = await fetch(`${DECOY_URL}/api/config`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -879,7 +889,9 @@ async function config(flags) {
   // Show current config
   const sp = !flags.json ? spinner("Fetching config…") : { stop() {} };
   try {
-    const res = await fetch(`${DECOY_URL}/api/config?token=${token}`);
+    const res = await fetch(`${DECOY_URL}/api/config`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     const data = await res.json();
 
     if (!res.ok) {
@@ -920,7 +932,9 @@ async function watch(flags) {
   const scanData = loadScanResults();
   let isPro = false;
   try {
-    const configRes = await fetch(`${DECOY_URL}/api/config?token=${token}`);
+    const configRes = await fetch(`${DECOY_URL}/api/config`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     const configData = await configRes.json();
     isPro = (configData.plan || "free") !== "free";
   } catch {}
@@ -963,7 +977,9 @@ async function watch(flags) {
 
   const poll = async () => {
     try {
-      const res = await fetch(`${DECOY_URL}/api/triggers?token=${token}`);
+      const res = await fetch(`${DECOY_URL}/api/triggers`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
       const data = await res.json();
 
       if (!data.triggers || data.triggers.length === 0) return;
@@ -981,7 +997,9 @@ async function watch(flags) {
 
   // Initial fetch
   try {
-    const res = await fetch(`${DECOY_URL}/api/triggers?token=${token}`);
+    const res = await fetch(`${DECOY_URL}/api/triggers`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     const data = await res.json();
     if (data.triggers?.length > 0) {
       const recent = data.triggers.slice(0, 3).reverse();
@@ -999,7 +1017,12 @@ async function watch(flags) {
     process.exit(1);
   }
 
-  setInterval(poll, interval * 1000);
+  let polling = false;
+  setInterval(async () => {
+    if (polling) return;
+    polling = true;
+    try { await poll(); } finally { polling = false; }
+  }, interval * 1000);
 }
 
 async function doctor(flags) {
@@ -1066,7 +1089,9 @@ async function doctor(flags) {
   if (token) {
     const sp = !flags.json ? spinner("Checking token…") : { stop() {} };
     try {
-      const res = await fetch(`${DECOY_URL}/api/triggers?token=${token}`);
+      const res = await fetch(`${DECOY_URL}/api/triggers`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
       if (res.ok) {
         const data = await res.json();
         checks.push({ check: "token", ok: true, triggers: data.count });

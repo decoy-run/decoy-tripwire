@@ -4,9 +4,11 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SERVER = join(import.meta.dirname, "..", "server", "server.mjs");
+const PKG_VERSION = JSON.parse(readFileSync(join(import.meta.dirname, "..", "package.json"), "utf8")).version;
 
 // Spawn the server process with a fake token (configured mode)
 function startServer(opts = {}) {
@@ -109,23 +111,24 @@ describe("initialize handshake", () => {
     assert.equal(res.result.protocolVersion, "2024-11-05");
     assert.deepStrictEqual(res.result.capabilities, { tools: {} });
     assert.equal(res.result.serverInfo.name, "system-tools");
-    assert.equal(res.result.serverInfo.version, "1.0.0");
+    assert.equal(res.result.serverInfo.version, PKG_VERSION);
   });
 
-  it("echoes back the client protocolVersion", async () => {
+  it("always responds with fixed protocolVersion 2024-11-05 regardless of client version", async () => {
     proc = startServer();
     sendMessage(proc, {
       jsonrpc: "2.0",
       id: 2,
       method: "initialize",
       params: {
-        protocolVersion: "2025-01-01",
+        protocolVersion: "9999-01-01",
         clientInfo: { name: "future-client", version: "2.0.0" },
       },
     });
 
     const res = await readResponse(proc);
-    assert.equal(res.result.protocolVersion, "2025-01-01");
+    assert.equal(res.result.protocolVersion, "2024-11-05",
+      "server should advertise fixed version, not echo client version");
   });
 });
 
@@ -593,5 +596,199 @@ describe("unknown method", () => {
     const res = await readResponse(proc);
 
     assert.equal(res.id, 77, "should get response for the real request, not the notification");
+  });
+});
+
+// ─── Auto-register guard ───
+
+describe("auto-register guard", () => {
+  let proc;
+  afterEach(async () => { if (proc) await killServer(proc); });
+
+  it("only attempts auto-register once per process", async () => {
+    proc = startServer({ token: "" });
+    const getStderr = collectStderr(proc);
+
+    sendMessage(proc, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc);
+
+    // Trigger two tripwire tool calls (both should attempt to report)
+    sendMessage(proc, {
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "execute_command", arguments: { command: "whoami" } },
+    });
+    await readResponse(proc);
+
+    sendMessage(proc, {
+      jsonrpc: "2.0", id: 3, method: "tools/call",
+      params: { name: "read_file", arguments: { path: "/etc/shadow" } },
+    });
+    await readResponse(proc);
+
+    await new Promise(r => setTimeout(r, 200));
+    const stderr = getStderr();
+
+    // The WARNING line should appear exactly once
+    const warningCount = (stderr.match(/WARNING: Auto-registering endpoint/g) || []).length;
+    assert.equal(warningCount, 1, "auto-register WARNING should appear exactly once per process");
+  });
+
+  it("does not attempt auto-register when token is configured", async () => {
+    proc = startServer(); // has a token by default
+    const getStderr = collectStderr(proc);
+
+    sendMessage(proc, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc);
+
+    sendMessage(proc, {
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "execute_command", arguments: { command: "whoami" } },
+    });
+    await readResponse(proc);
+
+    await new Promise(r => setTimeout(r, 200));
+    const stderr = getStderr();
+
+    assert.ok(!stderr.includes("Auto-registering"), "should not auto-register when token is present");
+  });
+});
+
+// ─── Protocol version ───
+
+describe("protocol version", () => {
+  let proc;
+  afterEach(async () => { if (proc) await killServer(proc); });
+
+  it("responds with 2024-11-05 when client sends a future version", async () => {
+    proc = startServer();
+    sendMessage(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "9999-01-01",
+        clientInfo: { name: "time-traveler", version: "99.0.0" },
+      },
+    });
+
+    const res = await readResponse(proc);
+    assert.equal(res.result.protocolVersion, "2024-11-05",
+      "server must advertise 2024-11-05 regardless of client version");
+  });
+
+  it("responds with 2024-11-05 when client sends an older version", async () => {
+    proc = startServer();
+    sendMessage(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2023-01-01",
+        clientInfo: { name: "old-client", version: "0.1.0" },
+      },
+    });
+
+    const res = await readResponse(proc);
+    assert.equal(res.result.protocolVersion, "2024-11-05");
+  });
+
+  it("responds with 2024-11-05 when client omits protocolVersion", async () => {
+    proc = startServer();
+    sendMessage(proc, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        clientInfo: { name: "minimal-client", version: "1.0.0" },
+      },
+    });
+
+    const res = await readResponse(proc);
+    assert.equal(res.result.protocolVersion, "2024-11-05");
+  });
+});
+
+// ─── Fisher-Yates shuffle ───
+
+describe("seeded shuffle (Fisher-Yates)", () => {
+  // Import the functions by spawning a server and checking tool lists
+  let proc;
+  afterEach(async () => { if (proc) await killServer(proc); });
+
+  it("same seed produces same tool order", async () => {
+    // Start two servers with the same token (same seed)
+    const token = "deterministic-seed-token-12345";
+    proc = startServer({ token, honeyTools: "all" });
+    sendMessage(proc, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc);
+    sendMessage(proc, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const res1 = await readResponse(proc);
+    await killServer(proc);
+
+    const proc2 = startServer({ token, honeyTools: "all" });
+    proc = proc2;
+    sendMessage(proc2, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc2);
+    sendMessage(proc2, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const res2 = await readResponse(proc2);
+
+    const names1 = res1.result.tools.map(t => t.name);
+    const names2 = res2.result.tools.map(t => t.name);
+    assert.deepStrictEqual(names1, names2, "same seed should produce identical tool order");
+  });
+
+  it("different seeds produce different tool orders", async () => {
+    proc = startServer({ token: "seed-alpha-000000000000", honeyTools: "all" });
+    sendMessage(proc, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc);
+    sendMessage(proc, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const res1 = await readResponse(proc);
+    await killServer(proc);
+
+    const proc2 = startServer({ token: "seed-beta-999999999999", honeyTools: "all" });
+    proc = proc2;
+    sendMessage(proc2, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc2);
+    sendMessage(proc2, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const res2 = await readResponse(proc2);
+
+    // Filter to only honey tools (non-decoy, non-static)
+    const staticNames = new Set([
+      "decoy_status", "decoy_upgrade", "decoy_configure_alerts", "decoy_billing",
+      "execute_command", "read_file", "write_file", "http_request",
+      "get_environment_variables", "make_payment", "authorize_service",
+      "database_query", "send_email", "access_credentials", "modify_dns", "install_package",
+    ]);
+    const honey1 = res1.result.tools.filter(t => !staticNames.has(t.name)).map(t => t.name);
+    const honey2 = res2.result.tools.filter(t => !staticNames.has(t.name)).map(t => t.name);
+
+    // They should have the same set of tools but different order
+    assert.deepStrictEqual([...honey1].sort(), [...honey2].sort(), "same tools should be present");
+    // With all 24 honey tools shuffled, different seeds should (almost certainly) produce different orders
+    const orderDiffers = honey1.some((name, i) => name !== honey2[i]);
+    assert.ok(orderDiffers, "different seeds should produce different ordering");
+  });
+
+  it("shuffle preserves all tools without duplicates or drops", async () => {
+    proc = startServer({ honeyTools: "all" });
+    sendMessage(proc, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } });
+    await readResponse(proc);
+    sendMessage(proc, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+    const res = await readResponse(proc);
+
+    const staticNames = new Set([
+      "decoy_status", "decoy_upgrade", "decoy_configure_alerts", "decoy_billing",
+      "execute_command", "read_file", "write_file", "http_request",
+      "get_environment_variables", "make_payment", "authorize_service",
+      "database_query", "send_email", "access_credentials", "modify_dns", "install_package",
+    ]);
+    const honeyNames = res.result.tools.filter(t => !staticNames.has(t.name)).map(t => t.name);
+
+    // No duplicates
+    const unique = new Set(honeyNames);
+    assert.equal(unique.size, honeyNames.length, "no duplicate tools");
+
+    // All 27 honey tool templates should be present when honeyTools=all
+    assert.equal(honeyNames.length, 27, "all 27 honey tools should be present");
   });
 });

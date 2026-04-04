@@ -6,6 +6,9 @@
     "decoy-tripwire": "bin/cli.mjs"
   },
   "type": "module",
+  "exports": {
+    "./server": "./server/server.mjs"
+  },
   "files": [
     "bin/",
     "server/"
