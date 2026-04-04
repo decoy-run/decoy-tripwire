@@ -614,18 +614,18 @@ function getHostConfigs() {
 
   // Cursor
   const cursorPath = p === "darwin"
-    ? join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "cursor.mcp", "mcp.json")
+    ? join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json")
     : p === "win32"
-      ? join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "cursor.mcp", "mcp.json")
-      : join(home, ".config", "Cursor", "User", "globalStorage", "cursor.mcp", "mcp.json");
+      ? join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json")
+      : join(home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
   hosts.push({ name: "Cursor", path: cursorPath, format: "mcpServers" });
 
   // Windsurf
   const windsurfPath = p === "darwin"
-    ? join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "windsurf.mcp", "mcp.json")
+    ? join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json")
     : p === "win32"
-      ? join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "windsurf.mcp", "mcp.json")
-      : join(home, ".config", "Windsurf", "User", "globalStorage", "windsurf.mcp", "mcp.json");
+      ? join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json")
+      : join(home, ".config", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
   hosts.push({ name: "Windsurf", path: windsurfPath, format: "mcpServers" });
 
   // VS Code
@@ -662,6 +662,7 @@ function writeTokenToHosts(token) {
       }
 
       entry.env.DECOY_TOKEN = token;
+      copyFileSync(host.path, host.path + ".bak");
       writeFileSync(host.path, JSON.stringify(config, null, 2) + "\n");
       updated.push({ name: host.name, status: "updated" });
     } catch (e) {
@@ -1363,14 +1364,12 @@ function send(obj) {
 }
 
 // Read input: support both Content-Length framed AND newline-delimited
+// Buffer accumulation and message extraction are synchronous to avoid races;
+// only message handling (which may await) is async and serialized via a queue.
 let buf = Buffer.alloc(0);
 
-process.stdin.on("data", (chunk) => {
-  buf = Buffer.concat([buf, chunk]);
-  processBuffer();
-});
-
-async function processBuffer() {
+function extractMessages() {
+  const messages = [];
   while (buf.length > 0) {
     // Try Content-Length framed first
     const headerStr = buf.toString("ascii", 0, Math.min(buf.length, 256));
@@ -1395,9 +1394,7 @@ async function processBuffer() {
       buf = buf.slice(messageEnd);
 
       try {
-        const msg = JSON.parse(body);
-        const response = await handleMessage(msg);
-        if (response) send(response);
+        messages.push(JSON.parse(body));
       } catch (e) {
         process.stderr.write(`[decoy] parse error: ${e.message}\n`);
       }
@@ -1412,14 +1409,39 @@ async function processBuffer() {
       if (!line) continue;
 
       try {
-        const msg = JSON.parse(line);
-        const response = await handleMessage(msg);
-        if (response) send(response);
+        messages.push(JSON.parse(line));
       } catch (e) {
         process.stderr.write(`[decoy] parse error: ${e.message}\n`);
       }
     }
   }
+  return messages;
 }
+
+let processing = false;
+const messageQueue = [];
+
+async function drainQueue() {
+  if (processing) return;
+  processing = true;
+  try {
+    while (messageQueue.length > 0) {
+      const msg = messageQueue.shift();
+      const response = await handleMessage(msg);
+      if (response) send(response);
+    }
+  } finally {
+    processing = false;
+  }
+}
+
+process.stdin.on("data", (chunk) => {
+  buf = Buffer.concat([buf, chunk]);
+  const messages = extractMessages();
+  if (messages.length > 0) {
+    messageQueue.push(...messages);
+    drainQueue();
+  }
+});
 
 process.stdin.on("end", () => process.exit(0));

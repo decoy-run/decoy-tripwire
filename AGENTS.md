@@ -4,7 +4,7 @@ Guidance for AI agents and human contributors working in this repository.
 
 ## 1. What Decoy Is
 
-Decoy is a security tripwire system for AI agent pipelines. It deploys honeypot MCP tools that detect prompt injection attacks in real time. If a malicious prompt tricks an agent into calling a decoy tool, the operator gets alerted instantly.
+Decoy is a security tripwire system for AI agent pipelines. It deploys tripwire MCP tools that detect prompt injection attacks in real time. If a malicious prompt tricks an agent into calling a decoy tool, the operator gets alerted instantly.
 
 ## 2. Repo Structure
 
@@ -26,13 +26,13 @@ This repo is the open-source MCP client. The backend worker and marketing site l
 
 The server operates in two modes based on whether `DECOY_TOKEN` is set:
 
-**Unconfigured** (no token): Exposes 3 onboarding tools + 12 honeypot tools
+**Unconfigured** (no token): Exposes 3 onboarding tools + 12 tripwire tools
 - `decoy_signup`, `decoy_configure`, `decoy_status`
-- Honeypot triggers are logged locally only
+- Tripwire triggers are logged locally only
 
-**Configured** (has token): Exposes 4 management tools + 12 honeypot tools
+**Configured** (has token): Exposes 4 management tools + 12 tripwire tools
 - `decoy_status`, `decoy_upgrade`, `decoy_configure_alerts`, `decoy_billing`
-- Honeypot triggers are reported to `app.decoy.run`
+- Tripwire triggers are reported to `app.decoy.run`
 
 Mode switches at runtime when `decoy_configure` is called — no restart needed.
 
@@ -44,14 +44,14 @@ Handles `init`, `login`, `scan`, `status`, `test`, `watch`, `agents`, `config`, 
 
 - **Zero dependencies.** server.mjs and cli.mjs use only Node.js builtins. No npm install needed at runtime.
 - **Self-contained.** server.mjs includes its own config path detection and writing logic (duplicated from cli.mjs intentionally) so it can operate independently.
-- **Realistic errors.** Every honeypot tool returns a plausible error (timeout, permission denied, connection refused). The agent should not be able to distinguish a decoy tool from a broken real tool.
+- **Realistic errors.** Every tripwire tool returns a plausible error (timeout, permission denied, connection refused). The agent should not be able to distinguish a decoy tool from a broken real tool.
 - **Fire and forget.** Trigger reporting is async and non-blocking. A network failure to report a trigger must never break the MCP session.
 
 ## 4. Working With This Code
 
-### Making Changes to Honeypot Tools
+### Making Changes to Tripwire Tools
 
-If you add, remove, or modify a honeypot tool:
+If you add, remove, or modify a tripwire tool:
 1. Update the `TOOLS` array in `server/server.mjs`
 2. Add a corresponding entry in `FAKE_RESPONSES`
 3. Update `classifySeverity()` if the tool is critical or high severity
@@ -101,4 +101,4 @@ The server proxies to these backend endpoints:
 - **Never log tokens to stdout.** Stdout is the MCP transport. Use `process.stderr.write()` for debug output.
 - **Never store card numbers.** The `decoy_upgrade` tool passes card details through to Stripe via the backend API. They must never be written to disk or logged.
 - **Keep the server zero-dependency.** Don't add npm packages. Use Node.js builtins only.
-- **Don't make honeypot tools detectable.** The fake responses should be indistinguishable from real tool failures. No "decoy" or "honeypot" strings in tool descriptions or error messages.
+- **Don't make tripwire tools detectable.** The fake responses should be indistinguishable from real tool failures. No "decoy" or "tripwire" strings in tool descriptions or error messages.

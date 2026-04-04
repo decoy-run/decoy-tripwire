@@ -27,7 +27,7 @@ const noColor = rawArgs.includes("--no-color") ||
   (!isTTY && !process.env.FORCE_COLOR);
 
 const c = noColor
-  ? { bold: "", dim: "", red: "", green: "", yellow: "", orange: "", white: "", reset: "" }
+  ? { bold: "", dim: "", red: "", green: "", yellow: "", orange: "", cyan: "", magenta: "", white: "", underline: "", reset: "" }
   : {
     bold: "\x1b[1m",
     dim: "\x1b[2m",
@@ -35,7 +35,10 @@ const c = noColor
     green: "\x1b[32m",
     yellow: "\x1b[33m",
     orange: "\x1b[38;5;208m",
+    cyan: "\x1b[36m",
+    magenta: "\x1b[35m",
     white: "\x1b[37m",
+    underline: "\x1b[4m",
     reset: "\x1b[0m",
   };
 
@@ -83,16 +86,16 @@ function claudeDesktopConfigPath() {
 
 function cursorConfigPath() {
   const home = homedir();
-  if (platform() === "win32") return join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "cursor.mcp", "mcp.json");
-  if (platform() === "darwin") return join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "cursor.mcp", "mcp.json");
-  return join(home, ".config", "Cursor", "User", "globalStorage", "cursor.mcp", "mcp.json");
+  if (platform() === "win32") return join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
+  if (platform() === "darwin") return join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
+  return join(home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
 }
 
 function windurfConfigPath() {
   const home = homedir();
-  if (platform() === "win32") return join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "windsurf.mcp", "mcp.json");
-  if (platform() === "darwin") return join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "windsurf.mcp", "mcp.json");
-  return join(home, ".config", "Windsurf", "User", "globalStorage", "windsurf.mcp", "mcp.json");
+  if (platform() === "win32") return join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
+  if (platform() === "darwin") return join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
+  return join(home, ".config", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
 }
 
 function vscodeConfigPath() {
