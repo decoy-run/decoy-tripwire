@@ -78,7 +78,7 @@ const MANAGEMENT_TOOLS = [
   },
   {
     name: "decoy_upgrade",
-    description: "Get a secure checkout link to upgrade to Decoy Guard Pro ($99/mo) or Business ($299/mo).",
+    description: "Get a secure checkout link to upgrade to Decoy Guard Pro ($29/mo) or Business ($99/mo).",
     inputSchema: {
       type: "object",
       properties: {
@@ -746,7 +746,7 @@ async function handleDecoyConfigure(args) {
     message: "Decoy configured. Tripwires are now reporting to cloud. Restart MCP hosts for config changes to take effect.",
     hosts: results,
     next_steps: {
-      upgrade: "Call decoy_upgrade to unlock Pro features ($99/mo)",
+      upgrade: "Call decoy_upgrade to unlock Pro features ($29/mo)",
       alerts: "Call decoy_configure_alerts to set up Slack/webhook alerts",
       status: "Call decoy_status to check your plan and trigger count"
     }

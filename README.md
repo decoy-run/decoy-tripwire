@@ -92,7 +92,7 @@ Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard).
 
 ## Plans
 
-| | Free | Pro ($99/mo) | Business ($299/mo) |
+| | Free | Pro ($29/mo) | Business ($99/mo) |
 |---|---|---|---|
 | Tripwires (12+ dynamic) | Yes | Yes | Yes |
 | Email alerts | Yes | Yes | Yes |
