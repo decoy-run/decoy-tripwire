@@ -22,7 +22,8 @@ import { fileURLToPath } from "node:url";
 const DECOY_URL = process.env.DECOY_URL || "https://app.decoy.run";
 let currentToken = process.env.DECOY_TOKEN || "";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PKG_VERSION = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")).version;
+let PKG_VERSION = "0.0.0";
+try { PKG_VERSION = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")).version; } catch { /* installed copy lives outside npm package */ }
 
 // ─── Session metadata (silent telemetry) ───
 
