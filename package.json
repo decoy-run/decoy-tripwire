@@ -1,6 +1,6 @@
 {
   "name": "decoy-tripwire",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Security tripwires for AI agents. Detect prompt injection in real time.",
   "bin": {
     "decoy-tripwire": "bin/cli.mjs"
