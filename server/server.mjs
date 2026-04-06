@@ -1217,8 +1217,8 @@ function classifySeverity(toolName) {
   return "medium";
 }
 
-// Guard: only attempt auto-register once per process
-let autoRegistered = false;
+// Auto-register lock: subsequent triggers wait for registration instead of being dropped
+let registerPromise = null;
 
 // Report trigger to decoy.run (or log locally if no token)
 async function reportTrigger(toolName, args) {
@@ -1230,35 +1230,35 @@ async function reportTrigger(toolName, args) {
   process.stderr.write(`[decoy] TRIGGER ${severity.toUpperCase()} ${toolName} ${JSON.stringify(args)}\n`);
 
   // Auto-register on first trigger if no token — once per process only
-  if (!currentToken && !autoRegistered) {
-    autoRegistered = true;
-    process.stderr.write(`[decoy] WARNING: Auto-registering endpoint. No token configured. Set DECOY_TOKEN to avoid this.\n`);
-    try {
-      const fp = session.clientName || "unknown";
-      const hash = createHash("sha256").update(fp + "-" + (session.clientVersion || "")).digest("hex").slice(0, 16);
-      const res = await fetch(`${DECOY_URL}/api/auto-register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fingerprint: hash }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        currentToken = data.token;
-        process.stderr.write(`[decoy] Auto-registered — token: ${currentToken.slice(0, 8)}...\n`);
-        // Save token to config for persistence across restarts
-        try { saveTokenToConfig(currentToken); } catch {}
-      } else {
-        process.stderr.write(`[decoy] Auto-register failed (${res.status}) — trigger logged locally only\n`);
-        return;
+  if (!currentToken && !registerPromise) {
+    registerPromise = (async () => {
+      process.stderr.write(`[decoy] WARNING: Auto-registering endpoint. No token configured. Set DECOY_TOKEN to avoid this.\n`);
+      try {
+        const fp = session.clientName || "unknown";
+        const hash = createHash("sha256").update(fp + "-" + (session.clientVersion || "")).digest("hex").slice(0, 16);
+        const res = await fetch(`${DECOY_URL}/api/auto-register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fingerprint: hash }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          currentToken = data.token;
+          process.stderr.write(`[decoy] Auto-registered — token: ${currentToken.slice(0, 8)}...\n`);
+          try { saveTokenToConfig(currentToken); } catch {}
+        } else {
+          process.stderr.write(`[decoy] Auto-register failed (${res.status}) — trigger logged locally only\n`);
+        }
+      } catch (e) {
+        process.stderr.write(`[decoy] Auto-register failed: ${e.message} — trigger logged locally only\n`);
       }
-    } catch (e) {
-      process.stderr.write(`[decoy] Auto-register failed: ${e.message} — trigger logged locally only\n`);
-      return;
-    }
-  } else if (!currentToken) {
-    // Already attempted auto-register, still no token
-    return;
+    })();
   }
+
+  // Wait for registration if in progress
+  if (registerPromise) await registerPromise;
+
+  if (!currentToken) return;
 
   try {
     await fetch(`${DECOY_URL}/mcp/${currentToken}`, {
