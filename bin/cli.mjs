@@ -926,6 +926,49 @@ async function config(flags) {
   }
 }
 
+async function proxyCmd(flags) {
+  // Raw argv again — flags object has already dropped the `--` separator.
+  const raw = process.argv.slice(2);
+  const sep = raw.indexOf("--");
+  if (sep === -1 || !raw[sep + 1]) {
+    log("");
+    log(`  ${c.red}error:${c.reset} proxy needs an upstream command after ${c.bold}--${c.reset}`);
+    log("");
+    log(`  ${c.bold}Usage:${c.reset}`);
+    log(`    decoy-tripwire proxy [--mode observe|enforce] [--no-decoys] [--prefix <str>] -- <upstream-cmd> <args...>`);
+    log("");
+    log(`  ${c.bold}Example:${c.reset}`);
+    log(`    decoy-tripwire proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp`);
+    log("");
+    process.exit(2);
+  }
+  const proxyFlags = raw.slice(1, sep);
+  const upstreamArgv = raw.slice(sep + 1);
+
+  const options = {
+    command: upstreamArgv[0],
+    args: upstreamArgv.slice(1),
+    token: findToken(flags) || "",
+    decoyUrl: DECOY_URL,
+    mode: null,
+    decoys: true,
+    prefix: null,
+    upstreamName: upstreamArgv[0],
+  };
+  for (let i = 0; i < proxyFlags.length; i++) {
+    const f = proxyFlags[i];
+    if (f === "--mode") options.mode = proxyFlags[++i];
+    else if (f === "--no-decoys") options.decoys = false;
+    else if (f === "--decoys") options.decoys = true;
+    else if (f === "--prefix") options.prefix = proxyFlags[++i];
+    else if (f === "--name") options.upstreamName = proxyFlags[++i];
+  }
+
+  // Defer import so the proxy module (with its own stdin handlers) only loads when invoked.
+  const { runProxy } = await import("../server/proxy.mjs");
+  await runProxy(options);
+}
+
 async function watch(flags) {
   const token = requireToken(flags);
 
@@ -1292,6 +1335,11 @@ ${c.bold}Manage:${c.reset}
   update                        Update local server to latest version
   uninstall                     Remove from all MCP hosts
 
+${c.bold}Enforce (beta):${c.reset}
+  proxy -- <cmd> <args...>      Wrap an upstream MCP server with policy enforcement
+  proxy --mode enforce -- …     Block denied calls instead of just observing
+  proxy --no-decoys -- …        Omit honeypot tools from the merged tools list
+
 ${c.bold}Flags:${c.reset}
       --token string    API token (or set DECOY_TOKEN env var)
       --host string     Target host: claude-desktop, cursor, windsurf, vscode, claude-code
@@ -1312,6 +1360,8 @@ ${c.bold}Examples:${c.reset}
   npx decoy-tripwire agents               List connected agents
   npx decoy-tripwire agents --json        Agent list as JSON
   npx decoy-tripwire watch                Live trigger monitoring
+  npx decoy-tripwire proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp
+                                          Proxy an upstream server with policy enforcement
 
 ${c.bold}Agent integration:${c.reset}
   This CLI ships with AGENTS.md for AI agent reference.
@@ -1326,15 +1376,20 @@ const cmd = args[0];
 const subcmd = args[1] && !args[1].startsWith("--") ? args[1] : null;
 const { flags } = parseArgs(args.slice(subcmd ? 2 : 1));
 
+// For `proxy`, everything after `--` is the upstream command line — don't let
+// those flags trigger our global --help/--version handlers.
+const sepIdx = args.indexOf("--");
+const ownArgs = cmd === "proxy" && sepIdx !== -1 ? args.slice(0, sepIdx) : args;
+
 // Global --version
-if (args.includes("--version") || args.includes("-V")) {
+if (ownArgs.includes("--version") || ownArgs.includes("-V")) {
   out(`decoy-tripwire ${VERSION}`);
   process.exit(0);
 }
 
 // #20: --help should never run a command as side effect.
 // Catch --help globally — if a command was given, still show help (not the command).
-if (args.includes("--help") || args.includes("-h")) {
+if (ownArgs.includes("--help") || ownArgs.includes("-h")) {
   showHelp();
   process.exit(0);
 }
@@ -1397,6 +1452,9 @@ switch (cmd) {
     break;
   case "upgrade":
     run(upgrade);
+    break;
+  case "proxy":
+    run(proxyCmd);
     break;
   default:
     // #12: Unknown commands should error, not silently show help.

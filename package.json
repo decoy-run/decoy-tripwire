@@ -1,13 +1,14 @@
 {
   "name": "decoy-tripwire",
-  "version": "0.9.5",
-  "description": "Security tripwires for AI agents. Detect prompt injection in real time.",
+  "version": "0.10.0",
+  "description": "Security tripwires and local MCP proxy for AI agents. Detect prompt injection and enforce tool-call policy.",
   "bin": {
     "decoy-tripwire": "bin/cli.mjs"
   },
   "type": "module",
   "exports": {
-    "./server": "./server/server.mjs"
+    "./server": "./server/server.mjs",
+    "./proxy": "./server/proxy.mjs"
   },
   "files": [
     "bin/",
