@@ -104,7 +104,6 @@ Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard).
 | 90-day history | | Yes | Yes |
 | Threat intel API | | Yes | Yes |
 | Security testing | | Yes | Yes |
-| Weekly digest | | Yes | Yes |
 | OWASP compliance reports | | | Yes |
 | Custom detection rules | | | Yes |
 | Gateway integrations | | | Yes |
