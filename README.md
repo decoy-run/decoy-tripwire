@@ -52,10 +52,10 @@ Requires Node.js 18+. Zero runtime dependencies.
 
 ## 🎓 Docs
 
-- [Quickstart](https://decoy.run/docs/tripwire/overview)
-- [CLI reference](https://decoy.run/docs/tripwire/cli)
-- [Auto-block and lockdown](https://decoy.run/docs/tripwire/auto-block)
-- [Dashboard and alerts](https://decoy.run/docs/tripwire/dashboard)
+- [Overview](https://decoy.run/docs/tripwire/overview)
+- [Telemetry](https://decoy.run/docs/tripwire/telemetry)
+- [Tool reference](https://decoy.run/docs/tripwire/tools)
+- [Dashboard](https://app.decoy.run/dashboard)
 
 ## 🛠 Commands
 
