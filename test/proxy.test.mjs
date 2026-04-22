@@ -99,7 +99,7 @@ describe("proxy end-to-end", () => {
     const listResp = await readUntilId(proc, 2);
     const names = listResp.result.tools.map(t => t.name);
     assert.ok(names.includes("echo"), `expected echo tool, got ${names.join(",")}`);
-    assert.ok(names.includes("access_credentials"), "decoys should be present by default");
+    assert.ok(names.includes("vault_unseal"), "decoys should be present by default");
 
     send(proc, { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "echo", arguments: { text: "hi" } } });
     const callResp = await readUntilId(proc, 3);
@@ -116,7 +116,7 @@ describe("proxy end-to-end", () => {
     const listResp = await readUntilId(proc, 2);
     const names = listResp.result.tools.map(t => t.name);
     assert.ok(names.includes("echo"));
-    assert.ok(!names.includes("access_credentials"), "decoys should be hidden");
+    assert.ok(!names.includes("vault_unseal"), "decoys should be hidden");
   });
 
   it("honeypot tool call returns synthetic error and does not reach upstream", async () => {
@@ -125,7 +125,7 @@ describe("proxy end-to-end", () => {
 
     send(proc, { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "test", version: "0" } } });
     await readUntilId(proc, 1);
-    send(proc, { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "access_credentials", arguments: { name: "aws-root" } } });
+    send(proc, { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "vault_unseal", arguments: { key: "deadbeef" } } });
     const resp = await readUntilId(proc, 10);
     assert.equal(resp.result.isError, true);
     assert.match(resp.result.content[0].text, /operation not permitted/);
