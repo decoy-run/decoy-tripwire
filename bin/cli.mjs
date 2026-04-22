@@ -192,6 +192,50 @@ function getServerPath() {
   return join(__dirname, "..", "server", "server.mjs");
 }
 
+function getServerDir() {
+  return join(__dirname, "..", "server");
+}
+
+// Copy every .mjs file from the package's server/ into the install dir.
+// The proxy needs its sibling modules (policy, shared, upstream, pauseRegistry,
+// notify, config) at runtime, so a single-file copy isn't enough once we start
+// wrapping upstream servers.
+function installServerTree(installDir) {
+  mkdirSync(installDir, { recursive: true });
+  const src = getServerDir();
+  for (const name of ["server.mjs", "proxy.mjs", "policy.mjs", "shared.mjs", "upstream.mjs", "pauseRegistry.mjs", "config.mjs", "notify.mjs"]) {
+    copyFileSync(join(src, name), join(installDir, name));
+  }
+}
+
+// An entry is "ours" if it already points at our installed server or proxy.
+function isDecoyEntry(entry, installDir) {
+  if (!entry || typeof entry !== "object") return false;
+  const args = Array.isArray(entry.args) ? entry.args : [];
+  return args.some(a => typeof a === "string" && a.startsWith(installDir));
+}
+
+// Rewrite every non-decoy MCP server entry so it runs through the proxy.
+// Original entry shape: { command, args, env }
+// Wrapped shape:       { command: "node", args: [<installDir>/proxy.mjs, --, <cmd>, <args>], env: { ...orig, DECOY_TOKEN } }
+function wrapExistingServers(servers, installDir, token) {
+  const proxyPath = join(installDir, "proxy.mjs");
+  const wrapped = [];
+  for (const [name, entry] of Object.entries(servers)) {
+    if (name === "system-tools") continue;
+    if (isDecoyEntry(entry, installDir)) continue;
+    if (!entry?.command) continue;
+    const originalArgs = Array.isArray(entry.args) ? entry.args : [];
+    servers[name] = {
+      command: "node",
+      args: [proxyPath, "--name", name, "--", entry.command, ...originalArgs],
+      env: { ...(entry.env || {}), DECOY_TOKEN: token },
+    };
+    wrapped.push(name);
+  }
+  return wrapped;
+}
+
 function findToken(flags) {
   let token = flags.token || process.env.DECOY_TOKEN;
   if (token) return token;
@@ -222,61 +266,53 @@ function detectHosts() {
   return found;
 }
 
-function installToHost(hostId, token) {
+function installToHost(hostId, token, { wrap = false } = {}) {
   const host = HOSTS[hostId];
   const configPath = host.configPath();
   const configDir = dirname(configPath);
-  const serverSrc = getServerPath();
 
   mkdirSync(configDir, { recursive: true });
 
   const installDir = join(configDir, "decoy");
-  mkdirSync(installDir, { recursive: true });
+  installServerTree(installDir);
   const serverDst = join(installDir, "server.mjs");
-  copyFileSync(serverSrc, serverDst);
 
   let config = {};
+  let backedUp = null;
   if (existsSync(configPath)) {
     try {
       config = JSON.parse(readFileSync(configPath, "utf8"));
     } catch {
-      const backup = configPath + ".bak." + Date.now();
-      copyFileSync(configPath, backup);
-      log(`  ${c.dim}Backed up existing config to ${backup}${c.reset}`);
+      backedUp = configPath + ".bak." + Date.now();
+      copyFileSync(configPath, backedUp);
+      log(`  ${c.dim}Backed up unreadable config to ${backedUp}${c.reset}`);
     }
   }
-
-  if (host.format === "mcp.servers") {
-    if (!config["mcp.servers"]) config["mcp.servers"] = {};
-    const servers = config["mcp.servers"];
-
-    if (servers["system-tools"]?.env?.DECOY_TOKEN === token) {
-      return { configPath, serverDst, alreadyConfigured: true };
-    }
-
-    servers["system-tools"] = {
-      command: "node",
-      args: [serverDst],
-      env: { DECOY_TOKEN: token },
-    };
-  } else {
-    if (!config.mcpServers) config.mcpServers = {};
-
-    if (config.mcpServers["system-tools"]?.env?.DECOY_TOKEN === token) {
-      return { configPath, serverDst, alreadyConfigured: true };
-    }
-
-    config.mcpServers["system-tools"] = {
-      command: "node",
-      args: [serverDst],
-      env: { DECOY_TOKEN: token },
-    };
+  // Always back up a valid config before we touch it — recovering from a bad
+  // wrap otherwise requires memory of what was there.
+  if (!backedUp && existsSync(configPath)) {
+    backedUp = configPath + ".bak." + Date.now();
+    copyFileSync(configPath, backedUp);
   }
+
+  const key = host.format === "mcp.servers" ? "mcp.servers" : "mcpServers";
+  if (!config[key]) config[key] = {};
+  const servers = config[key];
+
+  const alreadyConfigured = servers["system-tools"]?.env?.DECOY_TOKEN === token;
+
+  servers["system-tools"] = {
+    command: "node",
+    args: [serverDst],
+    env: { DECOY_TOKEN: token },
+  };
+
+  const wrapped = wrap ? wrapExistingServers(servers, installDir, token) : [];
 
   const tmp = configPath + ".tmp";
   writeFileSync(tmp, JSON.stringify(config, null, 2) + "\n");
   renameSync(tmp, configPath);
-  return { configPath, serverDst, alreadyConfigured: false };
+  return { configPath, serverDst, alreadyConfigured, wrapped, backedUp };
 }
 
 // ─── Commands ───
@@ -352,12 +388,24 @@ async function init(flags) {
   }
 
   const targets = flags.host ? [flags.host] : available;
+  // Wrapping is the delightful-UX path — one tripwire hit blocks every
+  // upstream via the proxy. Explicit --no-wrap disables, --wrap is implied.
+  const shouldWrap = flags["no-wrap"] ? false : true;
   let installed = 0;
+  const wrappedPerHost = [];
 
   for (const h of targets) {
     try {
-      const result = installToHost(h, data.token);
-      log(`  ${c.green}✓${c.reset} ${HOSTS[h].name}${result.alreadyConfigured ? " (already configured)" : ""}`);
+      const result = installToHost(h, data.token, { wrap: shouldWrap });
+      const note = result.alreadyConfigured ? " (already configured)" : "";
+      log(`  ${c.green}✓${c.reset} ${HOSTS[h].name}${note}`);
+      if (result.wrapped.length > 0) {
+        log(`    ${c.dim}Wrapped ${result.wrapped.length} upstream server${result.wrapped.length > 1 ? "s" : ""} through the proxy: ${result.wrapped.join(", ")}${c.reset}`);
+      }
+      if (result.backedUp) {
+        log(`    ${c.dim}Backed up prior config → ${result.backedUp}${c.reset}`);
+      }
+      wrappedPerHost.push({ host: h, wrapped: result.wrapped });
       installed++;
     } catch (e) {
       log(`  ${c.dim}– ${HOSTS[h].name} — skipped (${e.message})${c.reset}`);
@@ -374,8 +422,13 @@ async function init(flags) {
   log(`  ${c.dim}Token:${c.reset}     ${c.dim}${data.token}${c.reset}`);
   log(`  ${c.dim}Dashboard:${c.reset} ${c.orange}${DECOY_URL}/dashboard${c.reset}`);
   log("");
-  log(`  ${c.bold}Next:${c.reset} Restart your MCP host, then verify with:`);
-  log(`  ${c.dim}$${c.reset} npx decoy-tripwire test`);
+  if (shouldWrap && wrappedPerHost.some(h => h.wrapped.length > 0)) {
+    log(`  ${c.bold}Auto-block is live.${c.reset} When a tripwire fires, the tripped agent pauses for 10 min.`);
+    log(`  ${c.dim}Pass --no-wrap on init to keep upstream servers un-proxied.${c.reset}`);
+    log("");
+  }
+  log(`  ${c.bold}Next:${c.reset} Restart your MCP host — tripwires activate on reconnect.`);
+  log(`  ${c.dim}Optional: run ${c.reset}${c.dim}npx decoy-tripwire test${c.reset}${c.dim} to fire a sample trigger.${c.reset}`);
   log("");
 }
 
@@ -503,6 +556,10 @@ async function test(flags) {
 }
 
 async function status(flags) {
+  // Local pause registry — shown first because it's the live enforcement state.
+  // Runs even if no token is configured.
+  if (!flags.json) await printLocalPauses();
+
   const token = requireToken(flags);
 
   const sp = !flags.json ? spinner("Fetching status…") : { stop() {} };
@@ -837,6 +894,103 @@ async function setAgentStatus(agentName, newStatus, flags) {
     if (flags.json) { out(JSON.stringify({ error: e.message })); process.exit(1); }
     log(`  ${c.red}error:${c.reset} ${e.message}`);
   }
+}
+
+// ─── Local pause commands — read/write ~/.decoy/pause.json directly.
+// These operate on the proxy's pause registry and take effect on the next
+// tool call. No network round-trip, no hosted-API dependency.
+
+async function printLocalPauses() {
+  const { list } = await import("../server/pauseRegistry.mjs");
+  const { loadConfig } = await import("../server/config.mjs");
+  const pauses = list();
+  const cfg = loadConfig();
+  const ids = Object.keys(pauses);
+  if (ids.length === 0 && !cfg.lockdownMode) return; // quiet when nothing to say
+
+  log("");
+  if (ids.length > 0) {
+    log(`  ${c.bold}Active local pauses${c.reset}`);
+    for (const id of ids) {
+      const p = pauses[id];
+      const label = id === "*" ? "ALL agents (lockdown)" : id;
+      const until = p.expiresAt ? `until ${new Date(p.expiresAt).toLocaleString()}` : `${c.red}locked${c.reset}`;
+      const via = p.tool ? `  ${c.dim}(${p.tool})${c.reset}` : "";
+      log(`  ${c.orange}●${c.reset} ${c.bold}${label}${c.reset}  ${c.dim}${p.reason}${c.reset}  ${until}${via}`);
+    }
+  }
+  if (cfg.lockdownMode) {
+    log(`  ${c.dim}Lockdown mode:${c.reset} ${c.orange}on${c.reset} — one tripwire pauses every agent.`);
+  }
+}
+
+async function resume(agentId, flags) {
+  const { resume: r, resumeAll } = await import("../server/pauseRegistry.mjs");
+  if (flags.all || agentId === "all") {
+    resumeAll();
+    if (flags.json) { out(JSON.stringify({ resumed: "all" })); return; }
+    log("");
+    log(`  ${c.green}✓${c.reset} Cleared all pauses.`);
+    log("");
+    return;
+  }
+  const target = agentId || flags.agent;
+  if (!target) {
+    if (flags.json) { out(JSON.stringify({ error: "agent id required (pass agent id or --all)" })); process.exit(1); }
+    log(`  ${c.red}error:${c.reset} Pass an agent id or ${c.bold}--all${c.reset}.`);
+    log(`  ${c.dim}Usage:${c.reset} npx decoy-tripwire resume <agent-id>`);
+    log(`  ${c.dim}       npx decoy-tripwire resume --all${c.reset}`);
+    log(`  ${c.dim}See current pauses: npx decoy-tripwire status${c.reset}`);
+    process.exit(1);
+  }
+  const had = r(target);
+  if (flags.json) { out(JSON.stringify({ resumed: target, wasActive: had })); return; }
+  log("");
+  if (had) {
+    log(`  ${c.green}✓${c.reset} Resumed ${c.bold}${target}${c.reset}.`);
+  } else {
+    log(`  ${c.dim}No active pause for ${target}.${c.reset}`);
+  }
+  log("");
+}
+
+async function lock(agentId, flags) {
+  const { lock: l, ALL_AGENTS } = await import("../server/pauseRegistry.mjs");
+  const target = (flags.all || agentId === "all") ? ALL_AGENTS : (agentId || flags.agent);
+  if (!target) {
+    if (flags.json) { out(JSON.stringify({ error: "agent id required (pass agent id or --all)" })); process.exit(1); }
+    log(`  ${c.red}error:${c.reset} Pass an agent id or ${c.bold}--all${c.reset}.`);
+    log(`  ${c.dim}Usage:${c.reset} npx decoy-tripwire lock <agent-id>`);
+    log(`  ${c.dim}       npx decoy-tripwire lock --all${c.reset}`);
+    process.exit(1);
+  }
+  const entry = l(target, { reason: flags.reason || "manual-lock" });
+  if (flags.json) { out(JSON.stringify({ locked: target, entry })); return; }
+  log("");
+  log(`  ${c.red}●${c.reset} Locked ${c.bold}${target === ALL_AGENTS ? "all agents" : target}${c.reset} — stays paused until ${c.bold}resume${c.reset}.`);
+  log("");
+}
+
+async function lockdown(mode, flags) {
+  const { loadConfig, saveConfig } = await import("../server/config.mjs");
+  if (!mode || mode === "status") {
+    const cfg = loadConfig();
+    if (flags.json) { out(JSON.stringify({ lockdownMode: cfg.lockdownMode })); return; }
+    log("");
+    log(`  Lockdown mode: ${cfg.lockdownMode ? c.orange + "on" + c.reset : "off"}`);
+    log(`  ${c.dim}When on, one tripwire hit pauses every agent, not just the tripped one.${c.reset}`);
+    log("");
+    return;
+  }
+  if (mode !== "on" && mode !== "off") {
+    log(`  ${c.red}error:${c.reset} Usage: npx decoy-tripwire lockdown <on|off|status>`);
+    process.exit(1);
+  }
+  const cfg = saveConfig({ lockdownMode: mode === "on" });
+  if (flags.json) { out(JSON.stringify({ lockdownMode: cfg.lockdownMode })); return; }
+  log("");
+  log(`  ${c.green}✓${c.reset} Lockdown mode: ${cfg.lockdownMode ? c.orange + "on" + c.reset : "off"}.`);
+  log("");
 }
 
 async function config(flags) {
@@ -1335,7 +1489,13 @@ ${c.bold}Manage:${c.reset}
   update                        Update local server to latest version
   uninstall                     Remove from all MCP hosts
 
-${c.bold}Enforce (beta):${c.reset}
+${c.bold}When a tripwire fires:${c.reset}
+  resume <agent-id>             Clear an auto-pause immediately
+  resume --all                  Clear every pause
+  lock <agent-id>               Turn an auto-pause into a permanent block
+  lockdown on|off|status        If on, one tripwire pauses every agent
+
+${c.bold}Proxy (advanced):${c.reset}
   proxy -- <cmd> <args...>      Wrap an upstream MCP server with policy enforcement
   proxy --mode enforce -- …     Block denied calls instead of just observing
   proxy --no-decoys -- …        Omit honeypot tools from the merged tools list
@@ -1343,6 +1503,8 @@ ${c.bold}Enforce (beta):${c.reset}
 ${c.bold}Flags:${c.reset}
       --token string    API token (or set DECOY_TOKEN env var)
       --host string     Target host: claude-desktop, cursor, windsurf, vscode, claude-code
+      --no-wrap         (init) Skip wrapping existing MCP servers through the proxy
+      --all             (resume/lock) Apply to every agent
       --json            Machine-readable JSON output
       --brief           Minimal summary (use with --json)
       --yes             Skip confirmation prompts
@@ -1353,15 +1515,11 @@ ${c.bold}Flags:${c.reset}
 
 ${c.bold}Examples:${c.reset}
   npx decoy-tripwire init                 Set up tripwires (start here)
-  npx decoy-tripwire status               Check tripwire status
-  npx decoy-tripwire status --json        Machine-readable status
+  npx decoy-tripwire status               Check status and recent triggers
+  npx decoy-tripwire resume <agent-id>    Clear a tripwire auto-pause
+  npx decoy-tripwire lockdown on          Pause every agent on any tripwire hit
   npx decoy-tripwire test                 Fire a test trigger
-  npx decoy-tripwire scan                 Scan MCP servers (redirects to decoy-scan)
-  npx decoy-tripwire agents               List connected agents
-  npx decoy-tripwire agents --json        Agent list as JSON
   npx decoy-tripwire watch                Live trigger monitoring
-  npx decoy-tripwire proxy -- npx -y @modelcontextprotocol/server-filesystem /tmp
-                                          Proxy an upstream server with policy enforcement
 
 ${c.bold}Agent integration:${c.reset}
   This CLI ships with AGENTS.md for AI agent reference.
@@ -1455,6 +1613,15 @@ switch (cmd) {
     break;
   case "proxy":
     run(proxyCmd);
+    break;
+  case "resume":
+    resume(subcmd, flags).catch(e => { log(`  ${c.red}error:${c.reset} ${e.message}`); process.exit(1); });
+    break;
+  case "lock":
+    lock(subcmd, flags).catch(e => { log(`  ${c.red}error:${c.reset} ${e.message}`); process.exit(1); });
+    break;
+  case "lockdown":
+    lockdown(subcmd, flags).catch(e => { log(`  ${c.red}error:${c.reset} ${e.message}`); process.exit(1); });
     break;
   default:
     // #12: Unknown commands should error, not silently show help.

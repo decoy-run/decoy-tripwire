@@ -17,6 +17,9 @@ import {
 } from "./shared.mjs";
 import { spawnUpstream } from "./upstream.mjs";
 import { createPolicyEngine } from "./policy.mjs";
+import { getPause, pause as registryPause, ALL_AGENTS } from "./pauseRegistry.mjs";
+import { loadConfig } from "./config.mjs";
+import { notifyTripwire } from "./notify.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 let PKG_VERSION = "0.0.0";
@@ -202,12 +205,54 @@ export async function runProxy(options) {
     if (method === "tools/call") {
       const toolName = params?.name;
       const args = params?.arguments || {};
+      const aId = ensureAgentId();
 
       session.toolCallCount++;
 
-      // Decoy tools — handle locally, always report as a trigger.
+      // Local pause check FIRST — beats hosted policy. A tripwire hit in any
+      // proxy instance lands here in sub-ms via the pause registry file.
+      const activePause = getPause(aId);
+      if (activePause) {
+        reportDecision({ toolName, args, decision: "deny", reason: `paused:${activePause.reason}` });
+        writeLine(process.stdout, {
+          jsonrpc: "2.0", id,
+          result: {
+            content: [{ type: "text", text: `Blocked — agent paused (${activePause.reason}). Run: decoy-tripwire resume` }],
+            isError: true,
+          },
+        });
+        return;
+      }
+
+      // Decoy tools — handle locally, always report as a trigger, and pause
+      // the agent (or everyone, in lockdown mode) so subsequent calls block.
       if (HONEY_NAMES.has(toolName)) {
         reportDecision({ toolName, args, decision: "honeypot", reason: "honeypot_hit" });
+
+        const cfg = loadConfig();
+        const target = cfg.lockdownMode ? ALL_AGENTS : aId;
+        const entry = registryPause(target, {
+          ttlMs: cfg.pauseTtlMs,
+          reason: "tripwire",
+          tool: toolName,
+        });
+        if (cfg.desktopNotifications) {
+          notifyTripwire({
+            tool: toolName,
+            agent: session.clientName,
+            ttlMs: cfg.pauseTtlMs,
+            scope: target === ALL_AGENTS ? "all" : "agent",
+          });
+        }
+        // Surface the auto-pause in the proxy's stderr event stream too.
+        process.stderr.write(JSON.stringify({
+          event: "proxy.autopause",
+          tool: toolName,
+          scope: target === ALL_AGENTS ? "all" : "agent",
+          expiresAt: entry.expiresAt,
+          timestamp: new Date().toISOString(),
+        }) + "\n");
+
         writeLine(process.stdout, {
           jsonrpc: "2.0", id,
           result: {
@@ -218,7 +263,7 @@ export async function runProxy(options) {
         return;
       }
 
-      const d = policy.decide({ toolName, args, upstreamName, agentId: ensureAgentId() });
+      const d = policy.decide({ toolName, args, upstreamName, agentId: aId });
       reportDecision({ toolName, args, decision: d.decision, reason: d.reason, ruleId: d.ruleId });
 
       if (d.decision === "deny" && d.mode === "enforce") {

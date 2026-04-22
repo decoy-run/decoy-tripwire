@@ -1,31 +1,86 @@
-# decoy-tripwire
+<p align="center">
+  <a href="https://decoy.run?utm_source=github&utm_medium=tripwire_readme" target="_blank" rel="noopener noreferrer">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/decoy-run/decoy-tripwire/main/.github/assets/logomark-dark.svg">
+      <img src="https://raw.githubusercontent.com/decoy-run/decoy-tripwire/main/.github/assets/logomark-light.svg" height="48">
+    </picture>
+  </a>
+  <br />
+</p>
+<h1 align="center">
+  Decoy Tripwire
+</h1>
 
-MCP security scanning and tripwire detection for AI agents.
+<p align="center">
+  <a href="https://www.npmjs.com/package/decoy-tripwire"><img alt="npm" src="https://img.shields.io/npm/v/decoy-tripwire?color=111827&labelColor=111827"></a>
+  <a href="https://decoy.run/docs?utm_source=github&utm_medium=tripwire_readme"><img alt="documentation" src="https://img.shields.io/badge/documentation-decoy-111827?labelColor=111827"></a>
+  <a href="https://decoy.run/changelog?utm_source=github&utm_medium=tripwire_readme"><img alt="changelog" src="https://img.shields.io/badge/changelog-latest-111827?labelColor=111827"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-111827?labelColor=111827"></a>
+</p>
 
-[![npm](https://img.shields.io/npm/v/decoy-tripwire)](https://www.npmjs.com/package/decoy-tripwire)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+Know when your agents are compromised. Decoy Tripwire drops decoy MCP tools alongside your real ones — tools like `execute_command`, `make_payment`, `access_credentials` that no legitimate agent should ever call. When a prompt injection triggers one, the proxy pauses the compromised agent immediately and alerts you.
 
-```bash
-npx decoy-scan            # 1. Find risks
-npx decoy-tripwire init   # 2. Install tripwires
-npx decoy-tripwire test   # 3. Verify setup
-```
-
-Decoy Tripwire adds a tripwire server alongside your real MCP tools — 12 built-in decoy tools plus dynamically generated tools unique to your deployment. Tools like `execute_command`, `aws_iam_create_admin_role`, and `vault_unseal` that no legitimate agent should ever call. When a prompt injection triggers one, Decoy captures the full payload and alerts you immediately.
-
-Every tool returns a realistic error response. The agent sees a timeout or permission denied — not a detection signal. Attackers don't know they've been caught.
+Every decoy returns a realistic error (timeout, permission denied). The agent sees a broken real tool, not a detection. Attackers don't know they've been caught.
 
 **Works with:** Claude Desktop, Cursor, Windsurf, VS Code, Claude Code
 
-## Get Started
+## 🚀 Get Started
 
 ```bash
-npx decoy-tripwire init                    # Sign up and install
-npx decoy-tripwire init --no-account       # Install for agent self-signup
-npx decoy-tripwire login --token=xxx       # Log in with existing token
+npx decoy-tripwire init
 ```
 
-## Tripwire Tools
+That's it. `init` signs you up, installs the local proxy, wraps your existing MCP servers, and drops the tripwires. Restart your MCP host — tripwires are live.
+
+When a tripwire fires:
+- The compromised agent is paused for 10 minutes (auto-expires)
+- A desktop notification surfaces which tool was tripped
+- Every wrapped MCP server denies subsequent calls from that agent in sub-ms
+- Full context appears in your [dashboard](https://app.decoy.run/dashboard)
+
+Clear the pause early with `npx decoy-tripwire resume <agent-id>`.
+
+## 🧑‍💻 Install
+
+```bash
+npx decoy-tripwire init                    # Sign up and install (wraps upstreams by default)
+npx decoy-tripwire init --no-wrap          # Install without wrapping existing MCP servers
+npx decoy-tripwire login --token=xxx       # Log in with an existing token
+```
+
+Requires Node.js 18+. Zero runtime dependencies.
+
+## 🎓 Docs
+
+- [Quickstart](https://decoy.run/docs/tripwire/overview)
+- [CLI reference](https://decoy.run/docs/tripwire/cli)
+- [Auto-block and lockdown](https://decoy.run/docs/tripwire/auto-block)
+- [Dashboard and alerts](https://decoy.run/docs/tripwire/dashboard)
+
+## 🛠 Commands
+
+```bash
+# Monitor
+npx decoy-tripwire test                    # Fire a test trigger
+npx decoy-tripwire status                  # Local pauses + hosted triggers
+npx decoy-tripwire watch                   # Live tail of triggers
+
+# When a tripwire fires
+npx decoy-tripwire resume <agent-id>       # Clear an auto-pause immediately
+npx decoy-tripwire resume --all            # Clear every pause
+npx decoy-tripwire lock <agent-id>         # Turn an auto-pause into a permanent block
+npx decoy-tripwire lockdown on             # Any tripwire hit pauses every agent
+
+# Manage
+npx decoy-tripwire agents                  # List connected agents
+npx decoy-tripwire config                  # View alert configuration
+npx decoy-tripwire upgrade                 # Upgrade to Pro (via dashboard)
+npx decoy-tripwire uninstall --confirm     # Remove from all MCP hosts
+```
+
+All commands support `--json` for scripting and `--token=xxx` to override the stored token.
+
+## 🪤 Tripwire Tools
 
 | Tool | What it traps | Severity |
 |------|--------------|----------|
@@ -44,59 +99,25 @@ npx decoy-tripwire login --token=xxx       # Log in with existing token
 
 Plus dynamically generated tools from 6 threat categories (cloud infrastructure, secrets management, payments, CI/CD, identity, network). Each deployment gets a unique, deterministic set.
 
-## Commands
+## 🧠 How auto-block works
 
-```bash
-# Setup
-npx decoy-tripwire init                    # Sign up and install tripwires
-npx decoy-tripwire login --token=xxx       # Log in with existing token
-npx decoy-tripwire doctor                  # Diagnose setup issues
-npx decoy-tripwire update                  # Update local server to latest
-npx decoy-tripwire uninstall --confirm     # Remove from all MCP hosts
+`init` rewrites each MCP host config so upstream servers run through `node proxy.mjs -- <original command>`. The proxy intercepts every `tools/call`:
 
-# Monitor
-npx decoy-tripwire test                    # Send a test trigger
-npx decoy-tripwire status                  # Check triggers and endpoint
-npx decoy-tripwire watch                   # Live tail of triggers
+1. Checks the shared pause registry at `~/.decoy/pause.json` — if the agent is paused, denies immediately.
+2. If the call is a tripwire, returns a fake error and writes a 10-min pause entry for the agent.
+3. Otherwise forwards to upstream.
 
-# Manage
-npx decoy-tripwire agents                  # List connected agents
-npx decoy-tripwire agents pause <name>     # Pause tripwires for an agent
-npx decoy-tripwire agents resume <name>    # Resume tripwires for an agent
-npx decoy-tripwire config                  # View alert configuration
-npx decoy-tripwire config --slack=URL      # Set Slack webhook
-npx decoy-tripwire config --webhook=URL    # Set webhook URL
-npx decoy-tripwire upgrade                 # Upgrade to Pro (via dashboard)
-```
+Every proxy instance reads the registry on its hot path, so one tripwire hit blocks every wrapped server in the same process lifecycle. Sub-ms. Works offline. Dashboard sync is fire-and-forget.
 
-All commands support `--json` for machine-readable output and `--token=xxx` to specify a token.
+Turn on `lockdown` mode to escalate — any tripwire pauses every agent, not just the one that tripped.
 
-## Scanning
+## 📦 Plans
 
-Scanning moved to [decoy-scan](https://npmjs.com/package/decoy-scan):
-
-```bash
-npx decoy-scan                        # Scan all MCP servers
-npx decoy-scan --policy=no-critical   # CI/CD policy gate
-```
-
-## Dashboard
-
-Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard). Features:
-
-- **Incident timeline** — full attack detail with "Blocked" status, attack patterns, and recommended actions
-- **Agent management** — fingerprinting, risk scores, pause/resume, behavioral anomaly detection
-- **Rich alerts** — Slack Block Kit, webhooks, email with full incident context
-- **Threat intelligence** — CVE monitoring, attack pattern corpus, MCP advisories
-- **Compliance reports** — OWASP Agentic Top 10 assessment with trigger history and agent inventory
-
-## Plans
-
-| | Free | Pro ($29/mo) | Business ($99/mo) |
+| | Free | Team ($29/user/mo) | Business ($99/user/mo) |
 |---|---|---|---|
 | Tripwires (12+ dynamic) | Yes | Yes | Yes |
+| Auto-block via local proxy | Yes | Yes | Yes |
 | Email alerts | Yes | Yes | Yes |
-| Risk scores | Yes | Yes | Yes |
 | 7-day history | Yes | | |
 | SARIF/JSON export | Yes | Yes | Yes |
 | Slack/webhook alerts | | Yes | Yes |
@@ -108,25 +129,21 @@ Your dashboard is at [app.decoy.run/dashboard](https://app.decoy.run/dashboard).
 | Custom detection rules | | | Yes |
 | Gateway integrations | | | Yes |
 
-## Local-Only Mode
+## 🚢 Release Notes
 
-Works without an account. Without a `DECOY_TOKEN`, triggers are logged to stderr. Zero network dependencies.
+See [CHANGELOG.md](CHANGELOG.md) or the [hosted changelog](https://decoy.run/changelog).
 
-```bash
-npx decoy-tripwire init --no-account
-# Triggers logged locally: [decoy] TRIGGER CRITICAL execute_command {...}
-```
+## 🤝 Contribute
 
-## Why Tripwires
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Traditional security blocks known-bad inputs. But prompt injection is natural language — there's no signature to match. Tripwires detect unauthorized behavior instead. If your agent reaches for `execute_command` through a tool that shouldn't exist, something went wrong. Same principle as canary tokens and network deception.
-
-## Related
+## 🔗 Related
 
 - [decoy-scan](https://npmjs.com/package/decoy-scan) — Find security risks in your MCP servers
+- [decoy-redteam](https://npmjs.com/package/decoy-redteam) — Autonomous red team for MCP servers
 - [Decoy Guard](https://decoy.run) — Dashboard, threat intel, compliance reports
 - [OWASP Agentic Top 10](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)
 
-## License
+## 📝 License
 
-MIT
+MIT — see [LICENSE](LICENSE).

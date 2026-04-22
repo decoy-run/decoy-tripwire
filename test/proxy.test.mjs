@@ -44,12 +44,17 @@ process.stdin.on("data", (chunk) => {
 }
 
 function startProxy(upstream, extraArgs = []) {
+  // Isolate pause/config registries — each test process gets its own dir so
+  // auto-pause state from one run can't bleed into the next.
+  const decoyHome = join(tmpdir(), `decoy-test-home-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  mkdirSync(decoyHome, { recursive: true });
   const proc = spawn("node", [CLI, "proxy", ...extraArgs, "--", "node", upstream], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
       DECOY_TOKEN: "",
       DECOY_URL: "http://localhost:0",
+      DECOY_HOME: decoyHome,
     },
   });
   return proc;

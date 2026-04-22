@@ -10,15 +10,24 @@ Decoy is a security tripwire system for AI agent pipelines. It deploys tripwire 
 
 ```
 decoy-tripwire/
-├── server/server.mjs   # MCP server (stdio transport, zero dependencies)
-├── bin/cli.mjs          # CLI (npx decoy-tripwire ...)
+├── server/
+│   ├── server.mjs         # Tripwire MCP server (stdio, zero dependencies)
+│   ├── proxy.mjs          # Local proxy — wraps upstream MCP servers
+│   ├── policy.mjs         # Hosted-policy engine (used by proxy)
+│   ├── pauseRegistry.mjs  # Disk-backed pause registry (~/.decoy/pause.json)
+│   ├── config.mjs         # Local user config (~/.decoy/config.json)
+│   ├── notify.mjs         # Cross-platform desktop notifications
+│   ├── upstream.mjs       # Spawn/framing helpers for upstream MCP servers
+│   └── shared.mjs         # Shared utilities (framer, session, emitDecoyEvent)
+├── bin/cli.mjs            # CLI (npx decoy-tripwire ...)
+├── test/                  # node:test suites — run with `npm test`
 ├── package.json
 ├── README.md
-├── AGENTS.md            # You are here
+├── AGENTS.md              # You are here
 └── CONTRIBUTING.md
 ```
 
-This repo is the open-source MCP client. The backend worker and marketing site live in separate repos.
+This repo is the open-source MCP client + proxy. The backend worker and marketing site live in separate repos.
 
 ## 3. Architecture
 
@@ -38,7 +47,17 @@ Mode switches at runtime when `decoy_configure` is called — no restart needed.
 
 ### cli.mjs — CLI Commands
 
-Handles `init`, `login`, `scan`, `status`, `test`, `watch`, `agents`, `config`, `upgrade`, `doctor`, `update`, `uninstall`. All commands are in a single file with no build step.
+Handles `init`, `login`, `status`, `test`, `watch`, `agents`, `config`, `upgrade`, `doctor`, `update`, `uninstall`, `proxy`, and the local auto-pause commands (`resume`, `lock`, `lockdown`). All commands are in a single file with no build step.
+
+### proxy.mjs — Local MCP Proxy
+
+`init` rewrites each MCP host config so upstream servers run through `node proxy.mjs --name <n> -- <original command> <args>`. The proxy intercepts every `tools/call`:
+
+1. Reads the pause registry — if the agent is paused (or lockdown mode is on with any pause), denies immediately.
+2. If the call is a tripwire tool (any of `PROXY_HONEY_TOOLS`), returns a fake error AND writes a 10-min pause to the registry + fires a desktop notification.
+3. Otherwise consults the hosted policy engine and forwards to upstream.
+
+The registry lives at `~/.decoy/pause.json` and is read by every proxy instance on the hot path — O(small file read from OS page cache), sub-millisecond.
 
 ### Key Design Decisions
 
@@ -67,19 +86,18 @@ Commands are defined as functions and wired in the `switch` statement at the bot
 
 ## 5. Testing
 
-There is no test framework. Verify changes by running the server with stdin/stdout:
+Tests use the built-in `node:test` runner — no external framework. Run with:
 
 ```bash
-# Unconfigured mode
-printf '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}},"id":"1"}\n{"jsonrpc":"2.0","method":"tools/list","id":"2"}\n' | DECOY_TOKEN="" node server/server.mjs 2>/dev/null
-
-# Configured mode
-printf '...' | DECOY_TOKEN="test-token" node server/server.mjs 2>/dev/null
+npm test
 ```
+
+Suites cover the pause registry, install/wrap logic, proxy end-to-end (spawns a stub upstream), policy engine, and framing. Isolate registry state by setting `DECOY_HOME=$(mktemp -d)` before the test subprocess — `pauseRegistry.mjs` and `config.mjs` respect this env var.
 
 Syntax check before committing:
 ```bash
 node -c server/server.mjs
+node -c server/proxy.mjs
 node -c bin/cli.mjs
 ```
 
