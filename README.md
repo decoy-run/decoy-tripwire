@@ -70,7 +70,7 @@ npx decoy-tripwire lockdown on             # Any tripwire hit pauses every agent
 # Manage
 npx decoy-tripwire agents                  # List connected agents
 npx decoy-tripwire config                  # View alert configuration
-npx decoy-tripwire upgrade                 # Upgrade to Pro (via dashboard)
+npx decoy-tripwire upgrade                 # Upgrade to Team (via dashboard)
 npx decoy-tripwire uninstall --confirm     # Remove from all MCP hosts
 ```
 

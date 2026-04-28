@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir, platform } from "node:os";
 import { pathToFileURL } from "node:url";
@@ -219,6 +219,67 @@ describe("non-tty behavior", () => {
     // In exec(), stdin is not a TTY, so it should error
     assert.equal(exitCode, 1);
     assert.match(stderr, /interactive input|--email/i);
+  });
+});
+
+// ─── Init token resolution ───
+// The init flow must never write a host config without a verified token.
+// Three paths:
+//   1. --token=XXX           — direct
+//   2. --email=...           — /api/signup; falls back to browser if no token
+//   3. bare                  — browser + paste (default)
+// All must abort cleanly without rewriting host configs when a token isn't
+// resolved (anti-enumeration response, non-TTY environments, etc.).
+
+describe("init token resolution", () => {
+  it("init --email aborts without writing configs when /api/signup returns no token", async () => {
+    const { createServer } = await import("node:http");
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => body += chunk);
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        // Anti-enumeration response: ok+message, no token, no `existing` field.
+        res.end(JSON.stringify({ ok: true, message: "If this email is new, check your inbox for a verification link." }));
+      });
+    });
+    await new Promise(r => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address();
+
+    const tmpHome = join(tmpdir(), `decoy-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmpHome, { recursive: true });
+
+    try {
+      const { stderr, exitCode } = await run(
+        ["init", "--email=existing@example.com", "--no-color"],
+        { env: { HOME: tmpHome, DECOY_URL: `http://127.0.0.1:${port}` } },
+      );
+      assert.equal(exitCode, 1, "should exit 1 when signup returned no token and stdin isn't a TTY");
+      // Falls through to browser flow, which exits because exec() has no TTY.
+      assert.match(stderr, /Auto-signup didn't return a token|interactive input/i);
+      const claudeConfig = join(tmpHome, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+      assert.ok(!existsSync(claudeConfig), "must not write Claude config when token isn't resolved");
+    } finally {
+      server.close();
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("bare init in non-TTY exits cleanly without touching configs", async () => {
+    const tmpHome = join(tmpdir(), `decoy-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmpHome, { recursive: true });
+    try {
+      const { stderr, exitCode } = await run(
+        ["init", "--no-color"],
+        { env: { HOME: tmpHome } },
+      );
+      assert.equal(exitCode, 1, "non-TTY init should exit 1");
+      assert.match(stderr, /interactive input|Sign in to Decoy/i, "should mention browser flow or non-TTY");
+      const claudeConfig = join(tmpHome, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+      assert.ok(!existsSync(claudeConfig), "must not write Claude config in non-TTY without --token");
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });
 

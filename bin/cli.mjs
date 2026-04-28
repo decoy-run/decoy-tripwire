@@ -3,6 +3,7 @@
 // decoy-tripwire CLI — security tripwires for AI agents
 
 import { createInterface } from "node:readline";
+import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir, platform } from "node:os";
@@ -144,6 +145,46 @@ function prompt(question) {
       resolve(answer.trim());
     });
   });
+}
+
+function openBrowser(url) {
+  const cmd = process.platform === "darwin" ? "open"
+    : process.platform === "win32" ? "cmd"
+    : "xdg-open";
+  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
+  try {
+    spawn(cmd, args, { stdio: "ignore", detached: true }).unref();
+    return true;
+  } catch { return false; }
+}
+
+// Browser-based token capture. Modeled on decoy-scan's loginInteractive.
+// Works for both new and existing accounts (the website handles auth) — unlike
+// /api/signup which is anti-enumeration-locked for known emails.
+async function getTokenViaBrowser() {
+  const url = `${DECOY_URL}/dashboard?tab=settings#s-setup`;
+  log("");
+  log(`  ${c.bold}Sign in to Decoy${c.reset}`);
+  log(`  ${c.dim}Free, ~30 seconds. Email-only — no card, no password.${c.reset}`);
+  log("");
+  log(`  ${c.dim}1.${c.reset} Opening ${c.cyan}${url}${c.reset}`);
+  openBrowser(url);
+  log(`  ${c.dim}2.${c.reset} Sign in (or sign up if it's your first time)`);
+  log(`  ${c.dim}3.${c.reset} Copy your token from Setup & Tokens`);
+  log("");
+
+  const token = await prompt(`  Paste your token: `);
+
+  if (!token) {
+    log("");
+    log(`  ${c.dim}Cancelled. Re-run when you're ready.${c.reset}`);
+    return null;
+  }
+  if (token.length < 16) {
+    log(`  ${c.red}That doesn't look like a valid token (too short).${c.reset}`);
+    return null;
+  }
+  return token;
 }
 
 function parseArgs(args) {
@@ -349,34 +390,71 @@ async function init(flags) {
     return;
   }
 
-  // Get email
-  let email = flags.email;
-  if (!email) {
-    email = await prompt(`  ${c.dim}Email:${c.reset} `);
-  }
-  if (!email || !email.includes("@")) {
-    log(`  ${c.red}error:${c.reset} Invalid email address.`);
-    log(`  ${c.dim}Usage: npx decoy-tripwire init --email=you@company.com${c.reset}`);
-    process.exit(1);
-  }
-
-  // Signup
-  const sp = spinner("Creating endpoint…");
-  let data;
-  try {
-    data = await signup(email);
-    sp.stop(`  ${c.green}✓${c.reset} ${data.existing ? "Found existing" : "Created"} endpoint`);
-  } catch (e) {
-    sp.stop();
-    if (e.message.includes("already exists")) {
-      log(`  ${c.dim}Account exists for ${email}. Log in instead:${c.reset}`);
-      log("");
-      log(`  ${c.dim}$${c.reset} npx decoy-tripwire login --token=YOUR_TOKEN`);
-      log("");
-      log(`  ${c.dim}Find your token in your welcome email or at ${DECOY_URL}/login${c.reset}`);
+  // Resolve a token. Order of preference:
+  //   1. --token=XXX             (CI / scripted)
+  //   2. --email=foo@bar.com     (legacy fast-signup; only works for fresh emails)
+  //   3. browser + paste         (default — works for new and existing accounts)
+  let token;
+  if (flags.token) {
+    token = flags.token;
+    if (token.length < 16) {
+      log(`  ${c.red}error:${c.reset} Token looks invalid (too short).`);
       process.exit(1);
     }
-    throw e;
+  } else if (flags.email) {
+    const email = flags.email;
+    if (!email.includes("@")) {
+      log(`  ${c.red}error:${c.reset} Invalid email address.`);
+      log(`  ${c.dim}Usage: npx decoy-tripwire init --email=you@company.com${c.reset}`);
+      process.exit(1);
+    }
+    const sp = spinner("Creating endpoint…");
+    let data;
+    try {
+      data = await signup(email);
+      sp.stop(`  ${c.green}✓${c.reset} ${data.existing ? "Found existing" : "Created"} endpoint`);
+    } catch (e) {
+      sp.stop();
+      throw e;
+    }
+    // Anti-enumeration: identical response for new-but-rate-limited and
+    // existing-account cases (no token in either). Fall through to browser flow.
+    if (!data.token) {
+      log(`  ${c.dim}Auto-signup didn't return a token (email may already be registered).${c.reset}`);
+      log(`  ${c.dim}Falling back to browser sign-in:${c.reset}`);
+      token = await getTokenViaBrowser();
+      if (!token) process.exit(1);
+    } else {
+      token = data.token;
+    }
+  } else {
+    // Default: open dashboard, prompt for paste.
+    token = await getTokenViaBrowser();
+    if (!token) process.exit(1);
+  }
+
+  // Verify whatever token we ended up with — pasted tokens, --token=, and
+  // --email all share this gate so we never write a config we can't trust.
+  // Skip when DECOY_URL is overridden in tests (no real backend to hit).
+  if (!process.env.DECOY_URL) {
+    const sp = spinner("Verifying token…");
+    try {
+      const res = await fetch(`${DECOY_URL}/api/triggers`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        sp.stop();
+        log(`  ${c.red}error:${c.reset} Token not recognized by ${DECOY_URL}.`);
+        log(`  ${c.dim}Re-run init and paste your token from ${DECOY_URL}/dashboard?tab=settings#s-setup${c.reset}`);
+        process.exit(1);
+      }
+      sp.stop(`  ${c.green}✓${c.reset} Token verified`);
+    } catch (e) {
+      sp.stop();
+      log(`  ${c.red}error:${c.reset} Could not reach decoy.run — ${e.message}`);
+      log(`  ${c.dim}Hint: Check your network connection. The API is at app.decoy.run${c.reset}`);
+      process.exit(1);
+    }
   }
 
   // Install to hosts
@@ -396,7 +474,7 @@ async function init(flags) {
 
   for (const h of targets) {
     try {
-      const result = installToHost(h, data.token, { wrap: shouldWrap });
+      const result = installToHost(h, token, { wrap: shouldWrap });
       const note = result.alreadyConfigured ? " (already configured)" : "";
       log(`  ${c.green}✓${c.reset} ${HOSTS[h].name}${note}`);
       if (result.wrapped.length > 0) {
@@ -415,11 +493,11 @@ async function init(flags) {
   if (installed === 0) {
     log(`  ${c.dim}No MCP hosts found. Manual setup:${c.reset}`);
     log("");
-    printManualSetup(data.token);
+    printManualSetup(token);
   }
 
   log("");
-  log(`  ${c.dim}Token:${c.reset}     ${c.dim}${data.token}${c.reset}`);
+  log(`  ${c.dim}Token:${c.reset}     ${c.dim}${token}${c.reset}`);
   log(`  ${c.dim}Dashboard:${c.reset} ${c.orange}${DECOY_URL}/dashboard${c.reset}`);
   log("");
   if (shouldWrap && wrappedPerHost.some(h => h.wrapped.length > 0)) {
@@ -655,17 +733,17 @@ async function status(flags) {
 // #19: Upgrade via dashboard only. Card numbers in CLI flags leak to ps/history.
 async function upgrade(flags) {
   const token = findToken(flags);
+  const url = `${DECOY_URL}/dashboard?tab=settings#s-plan`;
 
   if (flags.json) {
-    const url = `${DECOY_URL}/dashboard`;
     out(JSON.stringify({ url }));
     return;
   }
 
   log("");
-  log(`  Upgrade to Pro for exposure analysis, Slack/webhook alerts, and more.`);
+  log(`  Upgrade to Team for Slack/webhook alerts, threat intel, and continuous scanning.`);
   log("");
-  log(`  ${c.dim}$${c.reset} open ${DECOY_URL}/dashboard`);
+  log(`  ${c.dim}$${c.reset} open ${url}`);
   log("");
 }
 
@@ -1470,9 +1548,11 @@ ${c.bold}Usage:${c.reset}
   decoy-tripwire [command] [flags]
 
 ${c.bold}Getting started:${c.reset}
-  init                          Sign up and install tripwires
+  init                          Sign in via browser, paste token, install tripwires
+  init --token=XXX              Install with an existing token (CI / scripted)
+  init --email=you@co           Auto-signup (only for fresh emails)
   init --no-account             Install without account (agent self-signup)
-  login                         Log in with an existing token
+  login                         Re-install on hosts with an existing token
   doctor                        Diagnose setup issues
 
 ${c.bold}Monitor:${c.reset}
@@ -1485,7 +1565,7 @@ ${c.bold}Manage:${c.reset}
   agents pause <name>           Pause tripwires for an agent
   agents resume <name>          Resume tripwires for an agent
   config                        View or update alert configuration
-  upgrade                       Upgrade to Pro
+  upgrade                       Upgrade to Team
   update                        Update local server to latest version
   uninstall                     Remove from all MCP hosts
 

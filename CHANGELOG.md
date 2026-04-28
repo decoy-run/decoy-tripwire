@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.5] - 2026-04-28
+
+### Changed
+- **`init` now uses a browser + paste flow by default**, matching
+  `decoy-scan`'s `loginInteractive` UX. The CLI opens
+  `https://app.decoy.run/dashboard?tab=settings#s-setup` and prompts the user
+  to paste their token. Works for both new and existing accounts —
+  `/api/signup` is anti-enumeration-locked for known emails, so the previous
+  `--email`-first flow silently failed for any returning user.
+  - `init --token=XXX` still works for CI / scripted installs.
+  - `init --email=foo@bar.com` still works for fresh emails as a fast path,
+    and falls back to the browser flow if `/api/signup` doesn't return a
+    token (anti-enumeration response or rate limit).
+- The pasted/passed token is now verified against `/api/triggers` before
+  any host config is touched, so an invalid token never leaves you with a
+  broken install.
+
+### Fixed
+- **`init` no longer silently writes broken configs when `/api/signup` returns
+  no token.** Previously the CLI plowed past this with `data.token === undefined`,
+  rewrote every host config with `env: {}` (since `JSON.stringify` drops
+  undefined values), printed `Token: undefined`, and left tripwires unable
+  to authenticate. The CLI now detects the missing token and falls back to
+  the browser flow (or aborts cleanly in non-TTY environments).
+
+## [0.11.4] - 2026-04-28
+
+### Fixed
+- `decoy-tripwire upgrade` now opens
+  `https://app.decoy.run/dashboard?tab=settings#s-plan` (the Plan section)
+  instead of the dashboard overview, so users land directly on the upgrade
+  picker. Matches the dashboard's own internal Upgrade CTAs.
+
+### Changed
+- `upgrade` copy now says "Upgrade to Team" and lists current Team-tier
+  features (Slack/webhook alerts, threat intel, continuous scanning) instead
+  of the legacy "Upgrade to Pro / exposure analysis" wording.
+
 ## [0.11.0] - 2026-04-21
 
 ### Added
