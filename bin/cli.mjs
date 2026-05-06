@@ -508,6 +508,9 @@ async function init(flags) {
   log(`  ${c.bold}Next:${c.reset} Restart your MCP host — tripwires activate on reconnect.`);
   log(`  ${c.dim}Optional: run ${c.reset}${c.dim}npx decoy-tripwire test${c.reset}${c.dim} to fire a sample trigger.${c.reset}`);
   log("");
+  log(`  ${c.dim}★ If decoy-tripwire helps, a star helps us prioritize what to build:${c.reset}`);
+  log(`  ${c.dim}  ${c.cyan}https://github.com/decoy-run/decoy-tripwire${c.reset}`);
+  log("");
 }
 
 async function login(flags) {

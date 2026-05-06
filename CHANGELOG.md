@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.6] - 2026-05-06
+
+### Added
+- `init` now prints a one-line GitHub star ask after the post-install summary.
+  Mirrors the same line in `decoy-scan` and `decoy-redteam`, so users running
+  multiple Decoy CLIs see consistent post-run output.
+
 ## [0.11.5] - 2026-04-28
 
 ### Changed
