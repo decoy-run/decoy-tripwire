@@ -95,14 +95,15 @@ export function writeLine(stream, obj) {
 // Two paths:
 //   - With token: POST /mcp/{token}, payload as before BUT with arguments
 //     redacted to types/lengths. Tripwire dashboards never need raw user data.
-//   - Without token: POST /api/telemetry as anonymous tripwire_decision event,
-//     keyed by installId. This is the data-collection path that closes the
-//     gap where unauthenticated tripwire users sent nothing at all.
+//   - Without token: enqueue a v2-envelope tripwire.decision event into
+//     the shared telemetry helper, which batches (10 events or 5s) and
+//     retries with a persistent queue. Closes the gap where
+//     unauthenticated tripwire users sent nothing.
 //
 // Block decisions on critical/high severity also include an args fingerprint
 // (sha256 prefix) so we can correlate the same exploit payload across installs
 // without storing the payload itself.
-export async function emitDecoyEvent(token, payload, url = DECOY_URL) {
+export async function emitDecoyEvent(token, payload, url = DECOY_URL, opts = {}) {
   if (telemetryDisabled()) return;
 
   // Defensive copy + redaction of any arguments object embedded in the payload.
@@ -118,26 +119,20 @@ export async function emitDecoyEvent(token, payload, url = DECOY_URL) {
         body: JSON.stringify(redacted),
       });
     } else {
-      // Anonymous path: lift the redacted decision payload into a telemetry
-      // envelope. installId comes from ~/.decoy/install_id (created on demand).
-      let installId;
-      try { installId = getOrCreateInstallId(); }
-      catch { return; }
-      const envelope = {
+      // Anonymous path — route through the shared telemetry helper so
+      // we get the v2 envelope, batching, retry, and persistent queue
+      // for free. The helper is async-imported to keep this file
+      // free of a circular dependency on telemetry.mjs.
+      const { enqueueDecision } = await import("./telemetry.mjs");
+      enqueueDecision({
         tool: "decoy-tripwire",
-        version: redacted.meta?.tripwireVersion || "unknown",
-        installId,
-        event: "tripwire_decision",
+        version: redacted.meta?.tripwireVersion || opts.version || "unknown",
+        event: "tripwire.decision",
+        runId: opts.runId,
         payload: {
           decision: redacted.params,
           meta: redacted.meta,
         },
-      };
-      await fetch(`${url}/api/telemetry`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(5000),
-        body: JSON.stringify(envelope),
       });
     }
   } catch (e) {
