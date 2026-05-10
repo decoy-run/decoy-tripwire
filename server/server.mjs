@@ -1227,8 +1227,18 @@ function classifySeverity(toolName) {
 // Auto-register lock: subsequent triggers wait for registration instead of being dropped
 let registerPromise = null;
 
-// Report trigger to decoy.run (or log locally if no token)
-async function reportTrigger(toolName, args) {
+// Report trigger to decoy.run (or log locally if no token).
+//
+// Detached from the caller via setImmediate so the honey-tool response goes
+// out before any of this work runs. Pre-2026-05-10 this function ran its sync
+// portion (including a stderr.write) in the same tick as the response, which
+// could block on a back-pressured pipe in CI (saw 5s+ honey-tool timeouts on
+// macOS-latest 2026-05-10 once the redaction sync work crossed a threshold).
+function reportTrigger(toolName, args) {
+  setImmediate(() => { reportTriggerImpl(toolName, args).catch(() => {}); });
+}
+
+async function reportTriggerImpl(toolName, args) {
   const severity = classifySeverity(toolName);
   const timestamp = new Date().toISOString();
 

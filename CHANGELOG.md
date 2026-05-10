@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.1] - 2026-05-10
+
+### Fixed
+- `reportTrigger` now runs entirely on a `setImmediate` tick so its
+  synchronous portion (including the visible `[decoy] TRIGGER` stderr
+  log) can never block the honey-tool response. The 0.12.0 redaction
+  added enough sync work to push response timing past 5s on
+  back-pressured pipes (saw failures on macOS-latest CI runners).
+  Honey-tool MCP responses now go out before any telemetry work runs.
+
 ## [0.12.0] - 2026-05-10
 
 ### Added
