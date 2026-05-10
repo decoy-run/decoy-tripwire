@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0] - 2026-05-10
+
+### Added
+- **v2 telemetry envelope** for anonymous decision events. Same shape
+  as decoy-scan 0.7.0 / decoy-redteam 0.3.0 — schema_version, event_id,
+  run_id, env block (node/platform/arch/ci/host/locale).
+- **Batched decisions.** Proxy + server now buffer decision events in
+  memory (10 events or 5 seconds) and flush as a single batched POST.
+  Reduces network chatter on busy MCP sessions.
+- **Persistent queue on failure.** Events that fail to ship fall
+  through to `~/.decoy/telemetry-queue.jsonl`; the next proxy/server
+  start drains them.
+
 ## [0.12.1] - 2026-05-10
 
 ### Fixed
