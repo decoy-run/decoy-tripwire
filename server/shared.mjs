@@ -2,8 +2,19 @@
 // Used by proxy.mjs; server.mjs still has its own inline copies for now.
 
 import { createHash } from "node:crypto";
+import { redactArguments, fingerprint, shouldFingerprint } from "./redact.mjs";
+import { getOrCreateInstallId } from "./install_id.mjs";
 
 export const DECOY_URL = process.env.DECOY_URL || "https://app.decoy.run";
+
+// Telemetry opt-out applies to BOTH authed and anon paths. Tripwire decisions
+// are part of the security telemetry; if the user has disabled telemetry, we
+// don't post them. The /mcp/{token} endpoint also receives them in the legacy
+// path, so opting out cuts both. Future: surface via dashboard "stop sending".
+function telemetryDisabled() {
+  const env = String(process.env.DECOY_TELEMETRY ?? "").toLowerCase();
+  return env === "0" || env === "false" || env === "off" || env === "no";
+}
 
 // Severity table mirrors server.mjs:1211-1218.
 const CRITICAL = new Set([
@@ -79,21 +90,81 @@ export function writeLine(stream, obj) {
   stream.write(JSON.stringify(obj) + "\n");
 }
 
-// Fire-and-forget POST to /mcp/{token}. Never throws.
-// Proxy decision events use method: "notifications/decoy.decision" with params containing
-// { decision, reason, toolName, arguments, upstreamName, ruleId?, meta }.
+// Fire-and-forget telemetry for proxy decisions. Never throws.
+//
+// Two paths:
+//   - With token: POST /mcp/{token}, payload as before BUT with arguments
+//     redacted to types/lengths. Tripwire dashboards never need raw user data.
+//   - Without token: POST /api/telemetry as anonymous tripwire_decision event,
+//     keyed by installId. This is the data-collection path that closes the
+//     gap where unauthenticated tripwire users sent nothing at all.
+//
+// Block decisions on critical/high severity also include an args fingerprint
+// (sha256 prefix) so we can correlate the same exploit payload across installs
+// without storing the payload itself.
 export async function emitDecoyEvent(token, payload, url = DECOY_URL) {
-  if (!token) return;
+  if (telemetryDisabled()) return;
+
+  // Defensive copy + redaction of any arguments object embedded in the payload.
+  // The current call sites pass `{ jsonrpc, method, params: { ..., arguments }, meta }`.
+  const redacted = redactDecisionPayload(payload);
+
   try {
-    await fetch(`${url}/mcp/${token}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(5000),
-      body: JSON.stringify(payload),
-    });
+    if (token) {
+      await fetch(`${url}/mcp/${token}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify(redacted),
+      });
+    } else {
+      // Anonymous path: lift the redacted decision payload into a telemetry
+      // envelope. installId comes from ~/.decoy/install_id (created on demand).
+      let installId;
+      try { installId = getOrCreateInstallId(); }
+      catch { return; }
+      const envelope = {
+        tool: "decoy-tripwire",
+        version: redacted.meta?.tripwireVersion || "unknown",
+        installId,
+        event: "tripwire_decision",
+        payload: {
+          decision: redacted.params,
+          meta: redacted.meta,
+        },
+      };
+      await fetch(`${url}/api/telemetry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify(envelope),
+      });
+    }
   } catch (e) {
     process.stderr.write(`[decoy-proxy] report failed: ${e.message}\n`);
   }
+}
+
+// Redact the arguments inside a JSON-RPC decision payload and attach an
+// optional fingerprint when the decision is confirmed-malicious. Pure —
+// returns a new object; never mutates input.
+export function redactDecisionPayload(payload) {
+  if (!payload || typeof payload !== "object") return payload;
+  const params = payload.params && typeof payload.params === "object" ? payload.params : null;
+  if (!params) return payload;
+
+  const rawArgs = params.arguments;
+  const redacted = {
+    ...payload,
+    params: {
+      ...params,
+      arguments: redactArguments(rawArgs),
+    },
+  };
+  if (shouldFingerprint({ decision: params.decision, severity: params.severity })) {
+    redacted.params.argsFingerprint = fingerprint(rawArgs);
+  }
+  return redacted;
 }
 
 // Hash a string to N hex chars — used for endpoint fingerprints in auto-register flows.

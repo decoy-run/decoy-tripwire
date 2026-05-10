@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] - 2026-05-10
+
+### Added
+- **Anonymous default-on telemetry.** Decision events are now sent to
+  `/api/telemetry` (anonymous, identified by `~/.decoy/install_id`) when no
+  `DECOY_TOKEN` is set. Authenticated installs still post to
+  `/mcp/{token}` as before. Previously, unauthenticated installs sent
+  nothing at all — the highest-volume telemetry source was dark.
+- **Argument redaction.** All tool arguments are reduced to type/length
+  shape before transmission (e.g. `{path: "<string:42>"}`). The redactor
+  applies on both authed and anonymous paths, so raw tool arguments never
+  leave the client. For block decisions on critical/high severity, an
+  `argsFingerprint` (sha256 prefix) is attached so we can correlate the
+  same payload across installs without storing the payload itself.
+  `server/redact.mjs` is the privacy boundary; `test/redact.test.mjs`
+  enforces that no raw values can leak.
+
+### Changed
+- `emitDecoyEvent` and `server.mjs`'s reportTrigger both route through the
+  redactor. `DECOY_TELEMETRY=0` now disables both authed and anonymous
+  paths; previously there was no opt-out for the authenticated path.
+
 ## [0.11.6] - 2026-05-06
 
 ### Added

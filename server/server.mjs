@@ -18,6 +18,13 @@ import { createHash } from "node:crypto";
 import { join, dirname } from "node:path";
 import { homedir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
+import { redactArguments, fingerprint, shouldFingerprint } from "./redact.mjs";
+import { getOrCreateInstallId } from "./install_id.mjs";
+
+function telemetryDisabled() {
+  const env = String(process.env.DECOY_TELEMETRY ?? "").toLowerCase();
+  return env === "0" || env === "false" || env === "off" || env === "no";
+}
 
 const DECOY_URL = process.env.DECOY_URL || "https://app.decoy.run";
 let currentToken = process.env.DECOY_TOKEN || "";
@@ -1258,27 +1265,65 @@ async function reportTrigger(toolName, args) {
   // Wait for registration if in progress
   if (registerPromise) await registerPromise;
 
-  if (!currentToken) return;
+  if (telemetryDisabled()) return;
+
+  // Redact arguments before sending. Decision="trigger" means a honey-tool was
+  // called — that's already the maximum-severity signal. shouldFingerprint
+  // applies based on severity; honey-tools are critical so blocked critical
+  // calls always get a fingerprint for cross-install correlation.
+  const redactedArgs = redactArguments(args);
+  const argsFingerprint = shouldFingerprint({ decision: "trigger", severity })
+    ? fingerprint(args)
+    : null;
+
+  const meta = {
+    clientName: session.clientName,
+    clientVersion: session.clientVersion,
+    protocolVersion: session.protocolVersion,
+    sessionDuration: Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000),
+    toolCallSequence: session.toolCallCount,
+    tripwireVersion: PKG_VERSION,
+  };
 
   try {
-    await fetch(`${DECOY_URL}/mcp/${currentToken}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(5000),
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        params: { name: toolName, arguments: args },
-        id: "trigger-" + Date.now(),
-        meta: {
-          clientName: session.clientName,
-          clientVersion: session.clientVersion,
-          protocolVersion: session.protocolVersion,
-          sessionDuration: Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000),
-          toolCallSequence: session.toolCallCount,
-        },
-      }),
-    });
+    if (currentToken) {
+      // Authenticated path — keeps the existing dashboard wiring. Args are
+      // redacted; raw values never leave the client.
+      await fetch(`${DECOY_URL}/mcp/${currentToken}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: toolName, arguments: redactedArgs, ...(argsFingerprint ? { argsFingerprint } : {}) },
+          id: "trigger-" + Date.now(),
+          meta,
+        }),
+      });
+    } else {
+      // Anonymous path — the install never registered (auto-register failed
+      // or was disabled). Capture the structural signal anyway via the
+      // anonymous telemetry endpoint, keyed by installId.
+      let installId;
+      try { installId = getOrCreateInstallId(); }
+      catch { return; }
+      await fetch(`${DECOY_URL}/api/telemetry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(5000),
+        body: JSON.stringify({
+          tool: "decoy-tripwire",
+          version: PKG_VERSION,
+          installId,
+          event: "tripwire_decision",
+          payload: {
+            decision: { decision: "trigger", toolName, severity, arguments: redactedArgs, ...(argsFingerprint ? { argsFingerprint } : {}) },
+            meta,
+          },
+        }),
+      });
+    }
   } catch (e) {
     process.stderr.write(`[decoy] Report failed (logged locally): ${e.message}\n`);
   }

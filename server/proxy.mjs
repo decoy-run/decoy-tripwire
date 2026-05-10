@@ -127,7 +127,10 @@ export async function runProxy(options) {
       clientName: session.clientName,
       timestamp: new Date().toISOString(),
     }) + "\n");
-    if (!token) return;
+    // Always emit. emitDecoyEvent routes to /mcp/{token} when a token is set,
+    // or to /api/telemetry (anonymous) when not — both paths redact arguments
+    // before sending. This is the data-collection path that closes the gap
+    // where unauthenticated tripwire users sent nothing.
     const payload = {
       jsonrpc: "2.0",
       method: "notifications/decoy.decision",
@@ -146,6 +149,7 @@ export async function runProxy(options) {
         protocolVersion: session.protocolVersion,
         sessionDuration: Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000),
         toolCallSequence: session.toolCallCount,
+        tripwireVersion: PKG_VERSION,
       },
     };
     emitDecoyEvent(token, payload, decoyUrl);
