@@ -322,47 +322,117 @@ export function maybePrintClaimURL({ tool, stream = process.stderr, force = fals
   stream.write(`\n  See your dashboard: ${dashURL}\n`);
 }
 
-// ─── Tripwire batched decisions ──────────────────────────────────
-// Buffer in memory; flush on size or interval. The tripwire process
-// is long-running so memory buffering is fine. On SIGTERM/SIGINT we
-// flush synchronously to disk so events aren't lost.
+// ─── Tripwire decision aggregator ────────────────────────────────
+// One raw event per decision would write N keys per session — that
+// is the per-key contention pattern that already caused dev-time
+// downtime, and at 5k tripwire users it would burn the daily write
+// quota. Aggregate decisions in memory instead and emit a single
+// tripwire.session.summary envelope on:
+//   - threshold: every 100 decisions
+//   - timer: every 5 minutes if any unflushed
+//   - process exit: best-effort sync flush via appendToQueue
+//
+// The summary carries severity/decision/tool counts plus a capped
+// list of args fingerprints for blocked critical/high decisions —
+// the high-signal cases worth correlating across installs.
 
-const _batch = [];
-let _batchTimer = null;
-const BATCH_MAX = 10;
-const BATCH_INTERVAL_MS = 5000;
+let _agg = null;
+let _aggTimer = null;
+const AGG_FLUSH_DECISIONS = 100;
+const AGG_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+const AGG_MAX_FINGERPRINTS = 200;
+
+function ensureAggregator(opts) {
+  if (_agg) return _agg;
+  _agg = {
+    tool: opts.tool,
+    version: opts.version,
+    runId: opts.runId,
+    startedAt: new Date().toISOString(),
+    decisionCount: 0,
+    byDecision: {},
+    bySeverity: {},
+    byTool: {},
+    byUpstream: {},
+    fingerprints: [],
+  };
+  if (!_aggTimer) {
+    _aggTimer = setTimeout(() => flushAggregate().catch(() => {}), AGG_FLUSH_INTERVAL_MS);
+  }
+  return _agg;
+}
 
 export function enqueueDecision(opts) {
   if (telemetryDisabled({ flag: opts.disabled })) return;
-  const envelope = buildEnvelope(opts);
-  if (!envelope) return;
-  _batch.push(envelope);
-  if (_batch.length >= BATCH_MAX) {
-    flushBatch();
-  } else if (!_batchTimer) {
-    _batchTimer = setTimeout(flushBatch, BATCH_INTERVAL_MS);
+  const a = ensureAggregator(opts);
+  a.decisionCount++;
+  const params = opts.payload?.decision || opts.payload?.params || {};
+  if (params.decision) a.byDecision[params.decision] = (a.byDecision[params.decision] || 0) + 1;
+  if (params.severity) a.bySeverity[params.severity] = (a.bySeverity[params.severity] || 0) + 1;
+  if (params.toolName) a.byTool[params.toolName] = (a.byTool[params.toolName] || 0) + 1;
+  if (params.upstreamName) a.byUpstream[params.upstreamName] = (a.byUpstream[params.upstreamName] || 0) + 1;
+  if (params.argsFingerprint && a.fingerprints.length < AGG_MAX_FINGERPRINTS) {
+    a.fingerprints.push({
+      tool: params.toolName,
+      severity: params.severity,
+      decision: params.decision,
+      fp: params.argsFingerprint,
+    });
+  }
+  if (a.decisionCount >= AGG_FLUSH_DECISIONS) {
+    flushAggregate().catch(() => {});
   }
 }
 
-async function flushBatch() {
-  if (_batchTimer) { clearTimeout(_batchTimer); _batchTimer = null; }
-  if (_batch.length === 0) return;
-  const drained = _batch.splice(0);
-  const r = await httpPost(JSON.stringify(drained));
-  if (!r.ok && !r.fatal) {
-    // Transient — persist to queue. Next CLI run drains them.
-    for (const e of drained) appendToQueue(e);
-  }
+async function flushAggregate() {
+  if (_aggTimer) { clearTimeout(_aggTimer); _aggTimer = null; }
+  if (!_agg || _agg.decisionCount === 0) { _agg = null; return; }
+  const snapshot = _agg;
+  _agg = null;
+  return sendEvent({
+    tool: snapshot.tool,
+    version: snapshot.version,
+    event: "tripwire.session.summary",
+    runId: snapshot.runId,
+    payload: {
+      windowStart: snapshot.startedAt,
+      windowEnd: new Date().toISOString(),
+      decisionCount: snapshot.decisionCount,
+      byDecision: snapshot.byDecision,
+      bySeverity: snapshot.bySeverity,
+      byTool: snapshot.byTool,
+      byUpstream: snapshot.byUpstream,
+      fingerprints: snapshot.fingerprints,
+    },
+  });
 }
 
-// Synchronous flush — called on process exit signals. Best-effort:
-// we drop batched events into the queue file so the next run picks
-// them up. Can't await fetch from a sync exit handler.
+// Best-effort sync flush on process exit. Drops the snapshot into
+// the queue file so the next process start picks it up. Can't await
+// fetch from a sync exit handler.
 export function flushBatchOnExit() {
-  if (_batch.length === 0) return;
-  for (const e of _batch) appendToQueue(e);
-  _batch.length = 0;
-  if (_batchTimer) { clearTimeout(_batchTimer); _batchTimer = null; }
+  if (!_agg || _agg.decisionCount === 0) return;
+  const snapshot = _agg;
+  _agg = null;
+  if (_aggTimer) { clearTimeout(_aggTimer); _aggTimer = null; }
+  const envelope = buildEnvelope({
+    tool: snapshot.tool,
+    version: snapshot.version,
+    event: "tripwire.session.summary",
+    runId: snapshot.runId,
+    payload: {
+      windowStart: snapshot.startedAt,
+      windowEnd: new Date().toISOString(),
+      decisionCount: snapshot.decisionCount,
+      byDecision: snapshot.byDecision,
+      bySeverity: snapshot.bySeverity,
+      byTool: snapshot.byTool,
+      byUpstream: snapshot.byUpstream,
+      fingerprints: snapshot.fingerprints,
+      partial: true,
+    },
+  });
+  if (envelope) appendToQueue(envelope);
 }
 
 // ─── Per-tool summarizers (kept here so CLI bin code stays small) ─
