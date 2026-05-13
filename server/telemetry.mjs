@@ -281,7 +281,7 @@ const V1_TO_V2 = {
   scan_complete: "scan.complete",
   redteam_complete: "redteam.complete",
   tripwire_decision: "tripwire.decision",
-  tripwire_session_summary: "tripwire.session.end",
+  tripwire_session_summary: "tripwire.session.summary",
 };
 
 export async function send(opts) {
@@ -338,8 +338,17 @@ export function maybePrintClaimURL({ tool, stream = process.stderr, force = fals
 
 let _agg = null;
 let _aggTimer = null;
+let _firstFlushDone = false;
 const AGG_FLUSH_DECISIONS = 100;
 const AGG_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+// Short delay before the *first* flush so even a one-shot session (a
+// few decisions, then the user closes the host before the 5-min mark)
+// still reports. Previously the only path for a short session was the
+// disk queue, which is only drained on the *next* tripwire run — for a
+// kick-the-tires user that next run never happens. 15s gives the
+// aggregator a moment to coalesce burst decisions and still ships
+// well within a typical session.
+const AGG_FIRST_FLUSH_MS = 15 * 1000;
 const AGG_MAX_FINGERPRINTS = 200;
 
 function ensureAggregator(opts) {
@@ -357,7 +366,8 @@ function ensureAggregator(opts) {
     fingerprints: [],
   };
   if (!_aggTimer) {
-    _aggTimer = setTimeout(() => flushAggregate().catch(() => {}), AGG_FLUSH_INTERVAL_MS);
+    const delay = _firstFlushDone ? AGG_FLUSH_INTERVAL_MS : AGG_FIRST_FLUSH_MS;
+    _aggTimer = setTimeout(() => flushAggregate().catch(() => {}), delay);
   }
   return _agg;
 }
@@ -387,6 +397,7 @@ export function enqueueDecision(opts) {
 async function flushAggregate() {
   if (_aggTimer) { clearTimeout(_aggTimer); _aggTimer = null; }
   if (!_agg || _agg.decisionCount === 0) { _agg = null; return; }
+  _firstFlushDone = true;
   const snapshot = _agg;
   _agg = null;
   return sendEvent({
