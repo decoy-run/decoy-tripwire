@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.2] - 2026-05-14
+
+### Fixed
+- **Auto-register no longer dead-locks after a transient failure.** The
+  `registerPromise` lock was set once and never cleared — a network blip
+  on the first trigger left it pointing at a settled promise forever, so
+  every subsequent trigger awaited it and proceeded token-less. One
+  failed registration meant silent local-only mode for the whole process
+  lifetime. The lock now clears on failure and retries are rate-limited
+  to once per 60s.
+
 ## [0.13.0] - 2026-05-10
 
 ### Added
