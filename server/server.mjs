@@ -1224,8 +1224,20 @@ function classifySeverity(toolName) {
   return "medium";
 }
 
-// Auto-register lock: subsequent triggers wait for registration instead of being dropped
+// Auto-register lock: subsequent triggers wait for an in-flight register
+// call instead of stampeding the API with parallel attempts.
+//
+// Previously this promise was set once and never cleared, so a transient
+// network failure on the first trigger left the variable pointing at a
+// resolved (rejected silently in the inner catch) promise — every future
+// trigger awaited it and proceeded without a token. Result: one
+// network blip on first run = silent dark mode for the whole process.
+//
+// Fix: clear the promise on failure and rate-limit retries to 60s so we
+// don't hammer the API if many triggers fire while we're degraded.
 let registerPromise = null;
+let lastRegisterAttempt = 0;
+const REGISTER_RETRY_MS = 60_000;
 
 // Report trigger to decoy.run (or log locally if no token).
 //
@@ -1246,8 +1258,12 @@ async function reportTriggerImpl(toolName, args) {
   const entry = JSON.stringify({ event: "trigger", tool: toolName, severity, arguments: args, clientName: session.clientName, sequence: session.toolCallCount, timestamp });
   process.stderr.write(`[decoy] TRIGGER ${severity.toUpperCase()} ${toolName} ${JSON.stringify(args)}\n`);
 
-  // Auto-register on first trigger if no token — once per process only
-  if (!currentToken && !registerPromise) {
+  // Auto-register on first trigger if no token. In-flight calls are
+  // shared via registerPromise. After a failure the promise is cleared
+  // and we wait REGISTER_RETRY_MS before the next attempt — so a network
+  // blip doesn't permanently strand the user in local-only mode.
+  if (!currentToken && !registerPromise && Date.now() - lastRegisterAttempt >= REGISTER_RETRY_MS) {
+    lastRegisterAttempt = Date.now();
     registerPromise = (async () => {
       process.stderr.write(`[decoy] WARNING: Auto-registering endpoint. No token configured. Set DECOY_TOKEN to avoid this.\n`);
       try {
@@ -1263,11 +1279,16 @@ async function reportTriggerImpl(toolName, args) {
           currentToken = data.token;
           process.stderr.write(`[decoy] Auto-registered — token: ${currentToken.slice(0, 8)}...\n`);
           try { saveTokenToConfig(currentToken); } catch {}
+          // Success: keep registerPromise set so concurrent triggers still
+          // share the resolved value. currentToken is now set, so the
+          // outer guard prevents future attempts.
         } else {
           process.stderr.write(`[decoy] Auto-register failed (${res.status}) — trigger logged locally only\n`);
+          registerPromise = null; // allow retry after REGISTER_RETRY_MS
         }
       } catch (e) {
         process.stderr.write(`[decoy] Auto-register failed: ${e.message} — trigger logged locally only\n`);
+        registerPromise = null;
       }
     })();
   }
