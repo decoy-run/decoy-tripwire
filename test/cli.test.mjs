@@ -57,10 +57,12 @@ describe("basics", () => {
   });
 
   it("module loads without error", async () => {
+    // `exec` (promisify(execFile)) rejects on non-zero exit, so reaching
+    // the next line is the assertion. Previously this ended with
+    // `assert.ok(true)` which looked tautological but was load-bearing —
+    // remove the suggestive line since reaching here already implies success.
     const cliUrl = pathToFileURL(CLI).href;
-    const { exitCode } = await exec("node", ["-e", `import('${cliUrl}')`]);
-    // Just checking it doesn't throw on import
-    assert.ok(true);
+    await exec("node", ["-e", `import('${cliUrl}')`]);
   });
 });
 
