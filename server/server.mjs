@@ -20,6 +20,8 @@ import { homedir, platform } from "node:os";
 import { fileURLToPath } from "node:url";
 import { redactArguments, fingerprint, shouldFingerprint } from "./redact.mjs";
 import { getOrCreateInstallId } from "./install_id.mjs";
+import { classifySeverity } from "./shared.mjs";
+import { getHostConfigs } from "./hosts.mjs";
 
 function telemetryDisabled() {
   const env = String(process.env.DECOY_TELEMETRY ?? "").toLowerCase();
@@ -611,50 +613,8 @@ const HONEY_TOOL_CATEGORY = Object.fromEntries(HONEY_TOOLS.map(t => [t.name, t.c
 // Strip internal _category from tool definitions exposed to clients
 const HONEY_TOOLS_PUBLIC = HONEY_TOOLS.map(({ category, ...tool }) => tool);
 
-// ─── Config path helpers (inline from cli.mjs for zero-dependency) ───
-
-function getHostConfigs() {
-  const home = homedir();
-  const p = platform();
-  const hosts = [];
-
-  // Claude Desktop
-  const claudePath = p === "darwin"
-    ? join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
-    : p === "win32"
-      ? join(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json")
-      : join(home, ".config", "Claude", "claude_desktop_config.json");
-  hosts.push({ name: "Claude Desktop", path: claudePath, format: "mcpServers" });
-
-  // Cursor
-  const cursorPath = p === "darwin"
-    ? join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json")
-    : p === "win32"
-      ? join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json")
-      : join(home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
-  hosts.push({ name: "Cursor", path: cursorPath, format: "mcpServers" });
-
-  // Windsurf
-  const windsurfPath = p === "darwin"
-    ? join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json")
-    : p === "win32"
-      ? join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json")
-      : join(home, ".config", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
-  hosts.push({ name: "Windsurf", path: windsurfPath, format: "mcpServers" });
-
-  // VS Code
-  const vscodePath = p === "darwin"
-    ? join(home, "Library", "Application Support", "Code", "User", "settings.json")
-    : p === "win32"
-      ? join(home, "AppData", "Roaming", "Code", "User", "settings.json")
-      : join(home, ".config", "Code", "User", "settings.json");
-  hosts.push({ name: "VS Code", path: vscodePath, format: "mcp.servers" });
-
-  // Claude Code
-  hosts.push({ name: "Claude Code", path: join(home, ".claude.json"), format: "mcpServers" });
-
-  return hosts;
-}
+// getHostConfigs is imported from hosts.mjs — the canonical host-config
+// table shared with bin/cli.mjs (was inline-duplicated here before).
 
 function writeTokenToHosts(token) {
   const hosts = getHostConfigs();
@@ -1214,15 +1174,9 @@ const FAKE_RESPONSES = {
     name: args.name,
   }),
 };
-// Severity classification (matches backend tools.js)
-function classifySeverity(toolName) {
-  if (HONEY_TOOL_NAMES.has(toolName)) return "critical";
-  const critical = ["execute_command", "write_file", "make_payment", "authorize_service", "modify_dns"];
-  const high = ["read_file", "http_request", "database_query", "access_credentials", "send_email", "install_package"];
-  if (critical.includes(toolName)) return "critical";
-  if (high.includes(toolName)) return "high";
-  return "medium";
-}
+// classifySeverity is imported from shared.mjs — was previously a local
+// copy here whose severity table the shared.mjs comment had to manually
+// "mirror." Pass HONEY_TOOL_NAMES explicitly so the shared fn stays pure.
 
 // Auto-register lock: subsequent triggers wait for an in-flight register
 // call instead of stampeding the API with parallel attempts.
@@ -1251,7 +1205,7 @@ function reportTrigger(toolName, args) {
 }
 
 async function reportTriggerImpl(toolName, args) {
-  const severity = classifySeverity(toolName);
+  const severity = classifySeverity(toolName, HONEY_TOOL_NAMES);
   const timestamp = new Date().toISOString();
 
   // Always log to stderr for local visibility

@@ -1,5 +1,5 @@
 // Shared utilities for decoy-tripwire. Pure — no side effects at import time.
-// Used by proxy.mjs; server.mjs still has its own inline copies for now.
+// Used by both proxy.mjs and server.mjs.
 
 import { createHash } from "node:crypto";
 import { redactArguments, fingerprint, shouldFingerprint } from "./redact.mjs";
@@ -16,7 +16,8 @@ function telemetryDisabled() {
   return env === "0" || env === "false" || env === "off" || env === "no";
 }
 
-// Severity table mirrors server.mjs:1211-1218.
+// Severity table — single source of truth (server.mjs and proxy.mjs both
+// import classifySeverity from here). Matches the backend tools.js table.
 const CRITICAL = new Set([
   "execute_command", "write_file", "make_payment", "authorize_service", "modify_dns",
 ]);

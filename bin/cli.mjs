@@ -6,8 +6,9 @@ import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, renameSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir, platform } from "node:os";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { HOSTS } from "../server/hosts.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -76,39 +77,8 @@ function spinner(label) {
 }
 
 // ─── Config paths for each MCP host ───
-
-function claudeDesktopConfigPath() {
-  const p = platform();
-  const home = homedir();
-  if (p === "darwin") return join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
-  if (p === "win32") return join(home, "AppData", "Roaming", "Claude", "claude_desktop_config.json");
-  return join(home, ".config", "Claude", "claude_desktop_config.json");
-}
-
-function cursorConfigPath() {
-  const home = homedir();
-  if (platform() === "win32") return join(home, "AppData", "Roaming", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
-  if (platform() === "darwin") return join(home, "Library", "Application Support", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
-  return join(home, ".config", "Cursor", "User", "globalStorage", "anysphere.cursor-mcp", "mcp.json");
-}
-
-function windsurfConfigPath() {
-  const home = homedir();
-  if (platform() === "win32") return join(home, "AppData", "Roaming", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
-  if (platform() === "darwin") return join(home, "Library", "Application Support", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
-  return join(home, ".config", "Windsurf", "User", "globalStorage", "codeium.windsurf-mcp", "mcp.json");
-}
-
-function vscodeConfigPath() {
-  const home = homedir();
-  if (platform() === "win32") return join(home, "AppData", "Roaming", "Code", "User", "settings.json");
-  if (platform() === "darwin") return join(home, "Library", "Application Support", "Code", "User", "settings.json");
-  return join(home, ".config", "Code", "User", "settings.json");
-}
-
-function claudeCodeConfigPath() {
-  return join(homedir(), ".claude.json");
-}
+// HOSTS is the canonical host-config table imported from ../server/hosts.mjs
+// (shared with server.mjs). Entries are { name, path, format }.
 
 function scanCachePath() {
   return join(homedir(), ".decoy", "scan.json");
@@ -121,14 +91,6 @@ function loadScanResults() {
     return null;
   }
 }
-
-const HOSTS = {
-  "claude-desktop": { name: "Claude Desktop", configPath: claudeDesktopConfigPath, format: "mcpServers" },
-  "cursor": { name: "Cursor", configPath: cursorConfigPath, format: "mcpServers" },
-  "windsurf": { name: "Windsurf", configPath: windsurfConfigPath, format: "mcpServers" },
-  "vscode": { name: "VS Code", configPath: vscodeConfigPath, format: "mcp.servers" },
-  "claude-code": { name: "Claude Code", configPath: claudeCodeConfigPath, format: "mcpServers" },
-};
 
 // ─── Helpers ───
 
@@ -283,7 +245,7 @@ function findToken(flags) {
 
   for (const [, host] of Object.entries(HOSTS)) {
     try {
-      const configPath = host.configPath();
+      const configPath = host.path;
       if (!existsSync(configPath)) continue;
       const config = JSON.parse(readFileSync(configPath, "utf8"));
       const key = host.format === "mcp.servers" ? "mcp.servers" : "mcpServers";
@@ -299,7 +261,7 @@ function findToken(flags) {
 function detectHosts() {
   const found = [];
   for (const [id, host] of Object.entries(HOSTS)) {
-    const p = host.configPath();
+    const p = host.path;
     if (existsSync(p) || id === "claude-desktop") {
       found.push(id);
     }
@@ -309,7 +271,7 @@ function detectHosts() {
 
 function installToHost(hostId, token, { wrap = false } = {}) {
   const host = HOSTS[hostId];
-  const configPath = host.configPath();
+  const configPath = host.path;
   const configDir = dirname(configPath);
 
   mkdirSync(configDir, { recursive: true });
@@ -756,7 +718,7 @@ async function uninstall(flags) {
   const hostList = [];
   for (const [id, host] of Object.entries(HOSTS)) {
     try {
-      const configPath = host.configPath();
+      const configPath = host.path;
       if (!existsSync(configPath)) continue;
       const config = JSON.parse(readFileSync(configPath, "utf8"));
       const key = host.format === "mcp.servers" ? "mcp.servers" : "mcpServers";
@@ -825,7 +787,7 @@ function update(flags) {
 
   for (const [id, host] of Object.entries(HOSTS)) {
     try {
-      const configPath = host.configPath();
+      const configPath = host.path;
       if (!existsSync(configPath)) continue;
       const config = JSON.parse(readFileSync(configPath, "utf8"));
       const key = host.format === "mcp.servers" ? "mcp.servers" : "mcpServers";
@@ -1311,7 +1273,7 @@ async function doctor(flags) {
   // 1. Hosts
   const installed = [];
   for (const [id, host] of Object.entries(HOSTS)) {
-    const configPath = host.configPath();
+    const configPath = host.path;
     if (!existsSync(configPath)) continue;
 
     try {
