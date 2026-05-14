@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lifetime. The lock now clears on failure and retries are rate-limited
   to once per 60s.
 
+### Changed
+- **Internal: deduplicated `classifySeverity` and host-config paths.**
+  `classifySeverity` lived in both `server/shared.mjs` and
+  `server/server.mjs`; the latter now imports the shared one. MCP
+  host-config paths were duplicated between `server/server.mjs` and
+  `bin/cli.mjs` — extracted to a canonical `server/hosts.mjs` consumed
+  by both. No behavior change; eliminates two drift points.
+
 ## [0.13.0] - 2026-05-10
 
 ### Added
